@@ -565,6 +565,17 @@ function ReadingTab({ draft, setDraft }: DraftProps) {
           />
           总是显示
         </label>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={reading.imagesViaProxy}
+            onChange={(e) => setDraft({ ...draft, reading: { ...reading, imagesViaProxy: e.currentTarget.checked } })}
+          />
+          通过代理下载图片
+        </label>
+        <p className="muted radio-desc">
+          图片由 MailBox 下载后再显示：勾选时走「代理」页的设置，国外邮件里的图片也能显示。不带 Cookie 和来源信息，发件人拿不到你的浏览器信息
+        </p>
       </Section>
 
       <Section title="信任的发件人" desc="拦截模式下，这些发件人的图片会自动显示。每行一个邮箱地址，或用 @域名 信任整个域名。">

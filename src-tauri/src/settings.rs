@@ -43,6 +43,9 @@ pub struct ReadingSettings {
     pub mark_read_on_open: bool,
     /// 深色主题下邮件正文如何显示
     pub email_dark_mode: DarkPreference,
+    /// 正文里的远程图片经「设置 → 代理」下载。
+    /// 图片来自任意第三方 CDN，与邮箱账号是否走代理无关，所以单独设置
+    pub images_via_proxy: bool,
 }
 
 impl Default for ReadingSettings {
@@ -52,6 +55,7 @@ impl Default for ReadingSettings {
             trusted_senders: vec![],
             mark_read_on_open: true,
             email_dark_mode: DarkPreference::Auto,
+            images_via_proxy: true,
         }
     }
 }
@@ -221,6 +225,7 @@ mod tests {
         assert_eq!(partial.sync.auto_sync_minutes, 5);
         assert_eq!(partial.reading.remote_images, RemoteImages::Block);
         assert_eq!(partial.reading.email_dark_mode, DarkPreference::Auto);
+        assert!(partial.reading.images_via_proxy);
         assert_eq!(partial.appearance.fonts.ui_scale, 100);
         assert_eq!(partial.appearance.fonts.mail_font_size, 0);
     }

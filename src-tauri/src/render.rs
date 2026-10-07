@@ -387,6 +387,98 @@ pub fn rewrite_cid(html: &str, mut lookup: impl FnMut(&str) -> Option<String>) -
     out
 }
 
+/// 远程图片的转发地址：`<base>_remote?u=<编码后的原地址>`，由 Rust 下载（可经代理）
+pub const REMOTE_PATH: &str = "_remote";
+
+pub fn remote_proxy_url(base: &str, url: &str) -> String {
+    format!("{base}{REMOTE_PATH}?u={}", utf8_percent_encode(url, NON_ALPHANUMERIC))
+}
+
+/// 从转发请求的 query 里取回原地址
+pub fn parse_remote_query(query: &str) -> Option<String> {
+    let value = query.split('&').find_map(|kv| kv.strip_prefix("u="))?;
+    let url = percent_decode_str(value).decode_utf8().ok()?.into_owned();
+    (url.starts_with("http://") || url.starts_with("https://")).then_some(url)
+}
+
+/// 属性值里的 URL 先解码 HTML 实体（`&amp;` 等），浏览器请求时也是这么做的；
+/// 协议相对地址 `//host/x` 补成 https
+fn normalize_remote(raw: &str) -> Option<String> {
+    let url = raw.trim().replace("&amp;", "&").replace("&#38;", "&").replace("&#x26;", "&");
+    let lower = url.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        Some(url)
+    } else if lower.starts_with("//") {
+        Some(format!("https:{url}"))
+    } else {
+        None
+    }
+}
+
+/// 把正文里引用的远程资源（src / background / url() / srcset / poster）改写成转发地址。
+/// 链接 href 不改，点击仍然交给系统浏览器
+pub fn rewrite_remote_urls(html: &str, map: impl Fn(&str) -> String) -> String {
+    const MARKERS: [&str; 5] = ["src=", "background=", "url(", "srcset=", "poster="];
+    let lower = html.to_ascii_lowercase();
+    let bytes = html.as_bytes();
+    let mut out = String::with_capacity(html.len() + 256);
+    let mut cursor = 0;
+    let mut search = 0;
+
+    loop {
+        let next = MARKERS
+            .iter()
+            .filter_map(|m| lower[search..].find(m).map(|i| (search + i, *m)))
+            .min_by_key(|(i, _)| *i);
+        let Some((pos, marker)) = next else { break };
+        let mut start = pos + marker.len();
+        while start < bytes.len() && matches!(bytes[start], b' ' | b'\t' | b'\n' | b'\r') {
+            start += 1;
+        }
+        let quote = bytes.get(start).copied().filter(|b| *b == b'"' || *b == b'\'');
+        if quote.is_some() {
+            start += 1;
+        }
+        let end = match quote {
+            Some(q) => html[start..].find(q as char).map_or(html.len(), |e| start + e),
+            None if marker == "url(" => html[start..].find(')').map_or(html.len(), |e| start + e),
+            None => html[start..]
+                .find(|c: char| c.is_whitespace() || c == '>')
+                .map_or(html.len(), |e| start + e),
+        };
+        let value = &html[start..end];
+
+        let replaced = if marker == "srcset=" {
+            // "a.png 1x, b.png 2x"：逐个候选改写 URL，保留后面的尺寸描述
+            let parts: Vec<String> = value
+                .split(',')
+                .map(|candidate| {
+                    let c = candidate.trim();
+                    let (url, desc) = c.split_once(char::is_whitespace).unwrap_or((c, ""));
+                    match normalize_remote(url) {
+                        Some(u) if desc.is_empty() => map(&u),
+                        Some(u) => format!("{} {}", map(&u), desc.trim()),
+                        None => c.to_string(),
+                    }
+                })
+                .collect();
+            let joined = parts.join(", ");
+            (joined != value).then_some(joined)
+        } else {
+            normalize_remote(value).map(|u| map(&u))
+        };
+
+        if let Some(new_value) = replaced {
+            out.push_str(&html[cursor..start]);
+            out.push_str(&new_value);
+            cursor = end;
+        }
+        search = end.max(pos + marker.len());
+    }
+    out.push_str(&html[cursor..]);
+    out
+}
+
 /// 是否引用了远程图片/样式（追踪像素通常藏在这里）
 pub fn has_remote_content(html: &str) -> bool {
     let lower = html.to_ascii_lowercase();
@@ -413,10 +505,12 @@ pub fn wrap_document_with_fonts(
     mail_family: &str,
     mail_font_size: u32,
 ) -> String {
+    // 放行远程内容时，图片已经改写成走本地转发（仍在 {base} 下）。
+    // 保留 https: http: 是为了兜住改写漏掉的引用（例如 <style> 里 @import 的字体样式）
     let remote = if allow_remote { " https: http:" } else { "" };
     let csp = format!(
         "default-src 'none'; script-src 'none'; img-src {base} data:{remote}; \
-         style-src 'unsafe-inline'{remote}; font-src data:{remote}; media-src {base}"
+         style-src 'unsafe-inline'{remote}; font-src {base} data:{remote}; media-src {base}"
     );
     // Plain 邮件不含颜色样式，我们的样式放在前面即可；其余模式也不覆盖邮件自己的样式
     format!(
@@ -520,6 +614,15 @@ pub fn render(raw: &[u8], route_base: &PartRoute, opts: &RenderOptions) -> Resul
         Some(part_url(&base, &PartRoute { part, ..clone_route(route_base) }))
     });
 
+    // 分类和远程内容检测都基于原始正文；放行远程图片时再改写成转发地址
+    let content_kind = classify(&body);
+    let has_remote = has_remote_content(&body);
+    let body = if opts.allow_remote && has_remote {
+        rewrite_remote_urls(&body, |url| remote_proxy_url(&base, url))
+    } else {
+        body
+    };
+
     let attachments = msg
         .attachments
         .iter()
@@ -536,7 +639,6 @@ pub fn render(raw: &[u8], route_base: &PartRoute, opts: &RenderOptions) -> Resul
         })
         .collect();
 
-    let content_kind = classify(&body);
     let render_mode = choose_mode(content_kind, opts.app_dark, opts.preference, opts.force_dark);
 
     Ok(MessageView {
@@ -545,7 +647,7 @@ pub fn render(raw: &[u8], route_base: &PartRoute, opts: &RenderOptions) -> Resul
         to: format_addresses(msg.to()),
         cc: format_addresses(msg.cc()),
         date: msg.date().map(|d| d.to_rfc3339()),
-        has_remote_content: has_remote_content(&body),
+        has_remote_content: has_remote,
         html: wrap_document_with_fonts(&body, opts.allow_remote, &base, render_mode, opts.mail_family, opts.mail_font_size),
         attachments,
         content_kind,
@@ -610,6 +712,61 @@ mod tests {
         for (input, want) in cases {
             assert_eq!(rewrite_cid(input, lookup), want, "{input}");
         }
+    }
+
+    #[test]
+    fn rewrites_remote_urls() {
+        let map = |u: &str| format!("P[{u}]");
+        let cases = [
+            (r#"<img src="https://a.com/x.png">"#, r#"<img src="P[https://a.com/x.png]">"#),
+            (r#"<img src='http://a.com/x.png'>"#, r#"<img src='P[http://a.com/x.png]'>"#),
+            ("<img src=https://a.com/x.png alt=x>", "<img src=P[https://a.com/x.png] alt=x>"),
+            (r#"<img SRC="//cdn.a.com/x.png">"#, r#"<img SRC="P[https://cdn.a.com/x.png]">"#),
+            // HTML 实体解码
+            (r#"<img src="https://a.com/x?a=1&amp;b=2">"#, r#"<img src="P[https://a.com/x?a=1&b=2]">"#),
+            (r#"<td background="https://a.com/bg.jpg">"#, r#"<td background="P[https://a.com/bg.jpg]">"#),
+            (
+                r#"<div style="background:url('https://a.com/bg.jpg') no-repeat">"#,
+                r#"<div style="background:url('P[https://a.com/bg.jpg]') no-repeat">"#,
+            ),
+            ("<div style=\"background:url(https://a.com/b.jpg)\">", "<div style=\"background:url(P[https://a.com/b.jpg])\">"),
+            (
+                r#"<img srcset="https://a.com/1.png 1x, https://a.com/2.png 2x">"#,
+                r#"<img srcset="P[https://a.com/1.png] 1x, P[https://a.com/2.png] 2x">"#,
+            ),
+            // 不改：链接、本地、data、cid
+            (r#"<a href="https://a.com">x</a>"#, r#"<a href="https://a.com">x</a>"#),
+            (r#"<img src="data:image/png;base64,AA">"#, r#"<img src="data:image/png;base64,AA">"#),
+            (r#"<img src="cid:logo">"#, r#"<img src="cid:logo">"#),
+            ("plain text src= nothing", "plain text src= nothing"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(rewrite_remote_urls(input, map), want, "{input}");
+        }
+    }
+
+    #[test]
+    fn remote_proxy_url_roundtrip() {
+        let original = "https://lh3.googleusercontent.com/a/x.png?sz=64&v=中文";
+        let url = remote_proxy_url("http://mailbox.localhost/", original);
+        assert!(url.starts_with("http://mailbox.localhost/_remote?u="));
+        let query = url.split_once('?').unwrap().1;
+        assert_eq!(parse_remote_query(query).as_deref(), Some(original));
+
+        assert_eq!(parse_remote_query("u=file%3A%2F%2F%2Fc%2Fwin.ini"), None);
+        assert_eq!(parse_remote_query("x=1"), None);
+    }
+
+    #[test]
+    fn renders_remote_images_through_proxy_only_when_allowed() {
+        let raw = b"Subject: t\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p><img src=\"https://img.example.com/a.png\"></p>\r\n";
+        let blocked = render(raw, &route(), &light()).unwrap();
+        assert!(blocked.has_remote_content);
+        assert!(blocked.html.contains("src=\"https://img.example.com/a.png\""));
+
+        let allowed = render(raw, &route(), &RenderOptions { allow_remote: true, ..light() }).unwrap();
+        assert!(allowed.has_remote_content);
+        assert!(allowed.html.contains(&format!("{}_remote?u=https%3A%2F%2Fimg%2Eexample%2Ecom%2Fa%2Epng", protocol_base())));
     }
 
     #[test]

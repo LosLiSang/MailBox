@@ -60,6 +60,7 @@ export type Settings = {
     trustedSenders: string[];
     markReadOnOpen: boolean;
     emailDarkMode: EmailDarkMode;
+    imagesViaProxy: boolean;
   };
   appearance: {
     theme: "system" | "light" | "dark";

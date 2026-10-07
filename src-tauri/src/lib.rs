@@ -8,6 +8,7 @@ mod oauth;
 mod render;
 mod rules;
 mod secrets;
+mod remote;
 mod settings;
 mod sync;
 
@@ -38,6 +39,7 @@ struct AppState {
     attachments_dir: PathBuf,
     db_path: PathBuf,
     oauth_cancel: Arc<AtomicBool>,
+    remote: remote::RemoteFetcher,
 }
 
 impl AppState {
@@ -586,6 +588,37 @@ fn open_external(app: AppHandle, url: String) -> Result<(), String> {
 
 // ---------- mailbox:// 协议：给阅读 iframe 提供内联图片 ----------
 
+/// 远程图片转发：按设置决定是否走代理。失败时返回错误码，浏览器显示为裂图
+fn serve_remote(state: &AppState, query: &str) -> Response<Vec<u8>> {
+    let fail = |status: StatusCode, msg: String| {
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .body(msg.into_bytes())
+            .unwrap()
+    };
+    let Some(url) = render::parse_remote_query(query) else {
+        return fail(StatusCode::BAD_REQUEST, "bad url".into());
+    };
+    let proxy = if state.settings.get().reading.images_via_proxy {
+        state.settings.proxy()
+    } else {
+        net::ProxyConfig::default()
+    };
+    match state.remote.fetch(&url, &proxy) {
+        Ok(item) => Response::builder()
+            .header(header::CONTENT_TYPE, item.mime)
+            .header(header::CACHE_CONTROL, "private, max-age=86400")
+            .header("X-Content-Type-Options", "nosniff")
+            .body(item.data.as_ref().clone())
+            .unwrap(),
+        Err(e) => {
+            eprintln!("[remote] {url}: {e}");
+            fail(StatusCode::BAD_GATEWAY, e)
+        }
+    }
+}
+
 fn serve_part(state: &AppState, path: &str) -> Response<Vec<u8>> {
     let not_found = || Response::builder().status(StatusCode::NOT_FOUND).body(vec![]).unwrap();
     let Some(route) = render::parse_route(path) else { return not_found() };
@@ -613,7 +646,15 @@ pub fn run() {
         .register_asynchronous_uri_scheme_protocol(render::SCHEME, |ctx, request, responder| {
             let state = app_state(ctx.app_handle());
             let path = request.uri().path().to_string();
-            std::thread::spawn(move || responder.respond(serve_part(&state, &path)));
+            let query = request.uri().query().unwrap_or_default().to_string();
+            std::thread::spawn(move || {
+                let response = if path.trim_start_matches('/') == render::REMOTE_PATH {
+                    serve_remote(&state, &query)
+                } else {
+                    serve_part(&state, &path)
+                };
+                responder.respond(response)
+            });
         })
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
@@ -625,6 +666,7 @@ pub fn run() {
                 attachments_dir: app.path().download_dir()?.join("MailBox"),
                 db_path,
                 oauth_cancel: Arc::new(AtomicBool::new(false)),
+                remote: remote::RemoteFetcher::new(),
             };
             app.manage(Arc::new(state));
 
