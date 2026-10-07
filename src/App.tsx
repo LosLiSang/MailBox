@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Account, type EmailDarkMode, type Envelope, type SettingsView } from "./api";
+import { api, type Account, type Category, type EmailDarkMode, type Envelope, type SettingsView } from "./api";
 import { AccountDialog } from "./components/AccountDialog";
 import { Avatar } from "./components/Avatar";
 import { MailList } from "./components/MailList";
@@ -12,12 +12,14 @@ import "./App.css";
 
 type Inbox = {
   /** null 表示本地缓存还没读出来 */
+  /** 正在浏览的分类：null 收件箱，-1 全部邮件 */
+  view: number | null;
   mails: Envelope[] | null;
   syncing: boolean;
   error: string | null;
 };
 
-const EMPTY_INBOX: Inbox = { mails: null, syncing: false, error: null };
+const EMPTY_INBOX: Inbox = { view: null, mails: null, syncing: false, error: null };
 
 export default function App() {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
@@ -26,6 +28,7 @@ export default function App() {
   const [dialog, setDialog] = useState<{ open: boolean; editing: Account | null }>({ open: false, editing: null });
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
   const [inboxes, setInboxes] = useState<Record<string, Inbox>>({});
+  const [categories, setCategories] = useState<Category[]>([]);
   const [openUid, setOpenUid] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<number>(undefined);
@@ -48,9 +51,9 @@ export default function App() {
   }, []);
 
   const loadCached = useCallback(
-    async (email: string) => {
+    async (email: string, view: number | null = null) => {
       try {
-        patch(email, { mails: await api.listCached(email) });
+        patch(email, { view, mails: await api.listCached(email, view) });
       } catch (err) {
         patch(email, { error: String(err) });
       }
@@ -65,7 +68,7 @@ export default function App() {
       patch(email, { syncing: true, error: null });
       try {
         const stats = await api.syncInbox(email);
-        patch(email, { mails: await api.listCached(email), syncing: false });
+        patch(email, { mails: await api.listCached(email, inboxes[email]?.view ?? null), syncing: false });
         if (announce || stats.added > 0) showNotice(syncSummary(stats));
       } catch (err) {
         // 同步失败时保留缓存，只提示错误（离线也能看）
@@ -74,7 +77,7 @@ export default function App() {
         syncing.current.delete(email);
       }
     },
-    [patch, showNotice],
+    [patch, showNotice, inboxes],
   );
 
   /** 先秒开本地缓存，再后台增量同步 */
@@ -99,13 +102,36 @@ export default function App() {
   // 只包含影响正文渲染的设置，变化时重新加载阅读区
   const readingVersion = settings ? JSON.stringify(settings.reading) : "";
 
-  // 外观
+  // 外观：主题、密度、字体、字号
   useEffect(() => {
     if (!settings) return;
     const root = document.documentElement;
     root.dataset.theme = settings.appearance.theme;
     root.dataset.density = settings.appearance.density;
+    root.style.setProperty("--ui-font", settings.appearance.uiFamily ? `"${settings.appearance.uiFamily}"` : "");
+    root.style.setProperty("--ui-scale", String(settings.appearance.uiScale / 100));
+    root.style.setProperty("--mail-font", settings.appearance.mailFamily ? `"${settings.appearance.mailFamily}"` : "");
+    root.style.setProperty("--mail-size", `${settings.appearance.mailFontSize || 14}px`);
   }, [settings]);
+
+  // 切换账号时加载分类列表
+  const refreshCategories = useCallback(
+    (email: string) => api.listCategories(email).then(setCategories).catch(() => setCategories([])),
+    [],
+  );
+  useEffect(() => {
+    if (selected) refreshCategories(selected);
+  }, [selected, refreshCategories]);
+
+  // 切换视图（收件箱 / 分类 / 全部）
+  const switchView = useCallback(
+    (view: number | null) => {
+      if (!selected) return;
+      setOpenUid(null);
+      loadCached(selected, view);
+    },
+    [selected, loadCached],
+  );
 
   // 第一次选中某账号时加载
   useEffect(() => {
@@ -153,6 +179,26 @@ export default function App() {
   function onSelectMail(mail: Envelope) {
     setOpenUid(mail.uid);
     if (!mail.seen && settings?.reading.markReadOnOpen) setSeen(mail, true);
+  }
+
+  /** 移动邮件到分类 / 移回收件箱（view: null） */
+  async function moveMail(mail: Envelope, view: number | null) {
+    if (!selected) return;
+    const email = selected;
+    // 乐观更新：先从当前列表里移除
+    setInboxes((all) => {
+      const box = all[email];
+      if (!box?.mails) return all;
+      return { ...all, [email]: { ...box, mails: box.mails.filter((m) => m.uid !== mail.uid) } };
+    });
+    setOpenUid(null);
+    try {
+      await api.moveMessages(email, [mail.uid], view);
+      refreshCategories(email);
+    } catch (err) {
+      showNotice(`移动失败: ${err}`);
+      loadCached(email, inbox.view);
+    }
   }
 
   async function saveReading(reading: Partial<SettingsView["reading"]>, notice: string) {
@@ -256,15 +302,42 @@ export default function App() {
           })}
         </nav>
 
-        <button className="add-account" onClick={() => setDialog({ open: true, editing: null })}>
-          ＋ 添加账号
-        </button>
-        <button
-          className={`sidebar-settings ${settingsTab ? "active" : ""}`}
-          onClick={() => setSettingsTab(settingsTab ? null : "accounts")}
-        >
-          ⚙ 设置
-        </button>
+        {current && (
+          <nav className="views">
+            <button
+              className={`view-item ${inbox.view === null ? "active" : ""}`}
+              onClick={() => switchView(null)}
+            >
+              📥 收件箱
+            </button>
+            {categories.map((c) => (
+              <button
+                key={c.id}
+                className={`view-item ${inbox.view === c.id ? "active" : ""}`}
+                onClick={() => switchView(c.id)}
+              >
+                <span className="view-dot" style={{ background: c.color }} />
+                {c.name}
+                <span className="view-count">{c.count}</span>
+              </button>
+            ))}
+            <button className={`view-item ${inbox.view === -1 ? "active" : ""}`} onClick={() => switchView(-1)}>
+              🗂 全部邮件
+            </button>
+          </nav>
+        )}
+
+        <div className="sidebar-footer">
+          <button className="add-account" onClick={() => setDialog({ open: true, editing: null })}>
+            ＋ 添加账号
+          </button>
+          <button
+            className={`sidebar-settings ${settingsTab ? "active" : ""}`}
+            onClick={() => setSettingsTab(settingsTab ? null : "accounts")}
+          >
+            ⚙ 设置
+          </button>
+        </div>
       </aside>
 
       {settingsTab && settings && accounts ? (
@@ -280,13 +353,25 @@ export default function App() {
           onRemoveAccount={onRemove}
           onCacheCleared={onCacheCleared}
           notify={showNotice}
+          email={selected ?? ""}
+          categories={categories}
+          onCategoriesChanged={(cats) => {
+            setCategories(cats);
+            if (selected) refreshCategories(selected);
+          }}
         />
       ) : current ? (
         <>
           <section className="list-pane">
             <header className="toolbar">
               <div className="toolbar-text">
-                <h1>收件箱</h1>
+                <h1>
+                  {inbox.view === null
+                    ? "收件箱"
+                    : inbox.view === -1
+                      ? "全部邮件"
+                      : categories.find((c) => c.id === inbox.view)?.name ?? "分类"}
+                </h1>
                 <span className="subtitle">
                   {inbox.syncing
                     ? "正在同步…"
@@ -324,7 +409,14 @@ export default function App() {
               {inbox.mails === null ? (
                 <Skeleton />
               ) : inbox.mails.length > 0 ? (
-                <MailList mails={inbox.mails} selectedUid={openUid} onSelect={onSelectMail} />
+                <MailList
+                  mails={inbox.mails}
+                  selectedUid={openUid}
+                  onSelect={onSelectMail}
+                  categories={categories}
+                  currentView={inbox.view}
+                  onMove={(mail, view) => moveMail(mail, view)}
+                />
               ) : inbox.syncing ? (
                 <Skeleton />
               ) : (
@@ -345,6 +437,8 @@ export default function App() {
                 appDark={appDark}
                 settingsVersion={readingVersion}
                 onDarkModeChange={setEmailDarkMode}
+                categories={categories}
+                onMove={(view) => openMail && moveMail(openMail, view)}
               />
             ) : (
               <div className="placeholder">选择一封邮件阅读</div>

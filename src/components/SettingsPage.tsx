@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
-import { api, type Account, type CacheStats, type Settings, type SettingsView } from "../api";
+import { api, type Account, type CacheStats, type Category, type FontFamily, type Rule, type Settings, type SettingsView } from "../api";
 import { formatSize, move, parseSenderList } from "../format";
 import { providerById } from "../providers";
 import { Avatar } from "./Avatar";
 
-type Tab = "accounts" | "sync" | "reading" | "proxy" | "appearance" | "advanced";
+const PALETTE = ["#d29922", "#539bf5", "#6e7781", "#f47067", "#3fb950", "#a371f7", "#db61a2", "#e5a38c"];
+
+type Tab = "accounts" | "categories" | "sync" | "reading" | "proxy" | "appearance" | "advanced";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "accounts", label: "账号" },
+  { id: "categories", label: "分类与规则" },
   { id: "sync", label: "同步与缓存" },
   { id: "reading", label: "阅读与隐私" },
   { id: "proxy", label: "代理" },
@@ -27,6 +30,10 @@ type Props = {
   onRemoveAccount: (account: Account) => void;
   onCacheCleared: () => void;
   notify: (text: string) => void;
+  /** 当前选中的账号（分类是按账号的） */
+  email: string;
+  categories: Category[];
+  onCategoriesChanged: (cats: Category[]) => void;
 };
 
 export type { Tab as SettingsTab };
@@ -89,6 +96,7 @@ export function SettingsPage(props: Props) {
       <div className="settings-main">
         <div className="settings-content">
           {tab === "accounts" && <AccountsTab {...props} />}
+          {tab === "categories" && <CategoriesTab {...props} />}
           {tab === "sync" && <SyncTab draft={draft} setDraft={setDraft} {...props} />}
           {tab === "reading" && <ReadingTab draft={draft} setDraft={setDraft} />}
           {tab === "proxy" && (
@@ -213,6 +221,216 @@ function AccountsTab({ accounts, onAccountsChanged, onAddAccount, onEditAccount,
         ＋ 添加账号
       </button>
     </Section>
+  );
+}
+
+// ---------- 分类与规则 ----------
+
+function CategoriesTab({ email, categories, onCategoriesChanged, notify }: Props) {
+  const [rules, setRules] = useState<Rule[]>([]);
+  const [fonts, setFonts] = useState<FontFamily[]>([]);
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState(PALETTE[2]);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [pattern, setPattern] = useState("");
+  const [ruleCategory, setRuleCategory] = useState<number | "">("");
+  const [applyExisting, setApplyExisting] = useState(true);
+
+  const refresh = () => {
+    api.listRules(email).then(setRules).catch(() => setRules([]));
+  };
+  useEffect(() => {
+    refresh();
+    api.listFonts().then(setFonts).catch(() => {});
+  }, [email]);
+
+  async function create() {
+    if (!newName.trim()) return;
+    try {
+      await api.createCategory(email, newName, newColor);
+      onCategoriesChanged(await api.listCategories(email));
+      setNewName("");
+    } catch (err) {
+      notify(String(err));
+    }
+  }
+
+  async function remove(id: number) {
+    if (!confirm("删除这个分类？里面的邮件会回到收件箱，相关发件人规则也会删除。")) return;
+    try {
+      await api.deleteCategory(email, id);
+      onCategoriesChanged(await api.listCategories(email));
+      refresh();
+    } catch (err) {
+      notify(String(err));
+    }
+  }
+
+  async function rename(id: number) {
+    try {
+      await api.updateCategory(email, id, editName || null, null);
+      onCategoriesChanged(await api.listCategories(email));
+      setEditingId(null);
+    } catch (err) {
+      notify(String(err));
+    }
+  }
+
+  async function reorder(from: number, to: number) {
+    const ids = categories.map((c) => c.id);
+    const next = move(ids, from, to);
+    if (next === ids) return;
+    try {
+      await api.reorderCategories(email, next);
+      onCategoriesChanged(await api.listCategories(email));
+    } catch (err) {
+      notify(String(err));
+    }
+  }
+
+  async function addRule() {
+    if (!pattern.trim() || ruleCategory === "") return;
+    try {
+      const moved = await api.addRule(email, pattern, ruleCategory, applyExisting);
+      notify(`规则已添加${moved ? `，已归类 ${moved} 封邮件` : ""}`);
+      setPattern("");
+      onCategoriesChanged(await api.listCategories(email));
+      refresh();
+    } catch (err) {
+      notify(String(err));
+    }
+  }
+
+  return (
+    <>
+      <Section
+        title="分类"
+        desc="每个邮箱一套分类，只保存在本机。邮件移进分类后不再出现在收件箱里。列表里右键一封邮件即可移动。"
+      >
+        <ul className="account-rows">
+          {categories.map((c, i) => (
+            <li key={c.id} className="category-row">
+              <span className="view-dot" style={{ background: c.color }} />
+              {editingId === c.id ? (
+                <>
+                  <input className="grow" value={editName} onChange={(e) => setEditName(e.currentTarget.value)} autoFocus />
+                  <button className="ghost small" onClick={() => rename(c.id)}>
+                    保存
+                  </button>
+                  <button className="ghost small" onClick={() => setEditingId(null)}>
+                    取消
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="account-row-text">
+                    {c.name}
+                    <span className="muted"> {c.count} 封</span>
+                  </div>
+                  <div className="row-actions">
+                    <button className="ghost small" onClick={() => reorder(i, i - 1)} disabled={i === 0} title="上移">
+                      ↑
+                    </button>
+                    <button
+                      className="ghost small"
+                      onClick={() => reorder(i, i + 1)}
+                      disabled={i === categories.length - 1}
+                      title="下移"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      className="ghost small"
+                      onClick={() => {
+                        setEditingId(c.id);
+                        setEditName(c.name);
+                      }}
+                    >
+                      重命名
+                    </button>
+                    <button className="ghost small danger" onClick={() => remove(c.id)}>
+                      删除
+                    </button>
+                  </div>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+        <div className="server-row">
+          <div className="color-row">
+            {PALETTE.map((c) => (
+              <button
+                key={c}
+                type="button"
+                className={`color-dot ${newColor === c ? "active" : ""}`}
+                style={{ background: c }}
+                onClick={() => setNewColor(c)}
+                title={c}
+              />
+            ))}
+          </div>
+          <input className="grow" placeholder="新分类名称" value={newName} onChange={(e) => setNewName(e.currentTarget.value)} />
+          <button className="primary" onClick={create} disabled={!newName.trim()}>
+            添加分类
+          </button>
+        </div>
+      </Section>
+
+      <Section
+        title="发件人规则"
+        desc="符合规则的邮件在同步时自动归类。写法：@github.com 匹配整个域名，boss@corp.com 匹配精确地址，也可以用至少两个字的关键词（如「微信」，匹配发件人名字）。规则从上到下，第一条命中的生效。"
+      >
+        <ul className="account-rows">
+          {rules.map((r) => (
+            <li key={r.id} className="category-row">
+              <span className="view-dot" style={{ background: r.categoryColor }} />
+              <div className="account-row-text">
+                <code>{r.pattern}</code>
+                <span className="muted"> → {r.categoryName}</span>
+              </div>
+              <div className="row-actions">
+                <button
+                  className="ghost small danger"
+                  onClick={async () => {
+                    await api.deleteRule(email, r.id);
+                    refresh();
+                  }}
+                >
+                  删除
+                </button>
+              </div>
+            </li>
+          ))}
+          {rules.length === 0 && <li className="muted">还没有规则</li>}
+        </ul>
+        <div className="server-row">
+          <input
+            className="grow"
+            placeholder="@example.com 或 boss@corp.com 或 关键词"
+            value={pattern}
+            onChange={(e) => setPattern(e.currentTarget.value)}
+          />
+          <select value={ruleCategory} onChange={(e) => setRuleCategory(e.currentTarget.value ? Number(e.currentTarget.value) : "")}>
+            <option value="">选择分类…</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <label className="checkbox">
+            <input type="checkbox" checked={applyExisting} onChange={(e) => setApplyExisting(e.currentTarget.checked)} />
+            连已有邮件一起归类
+          </label>
+          <button className="primary" onClick={addRule} disabled={!pattern.trim() || ruleCategory === ""}>
+            添加规则
+          </button>
+        </div>
+        {fonts.length > 0 && <p className="muted">本机共 {fonts.length} 个字体家族（在「外观」里使用）</p>}
+      </Section>
+    </>
   );
 }
 
@@ -512,37 +730,103 @@ function ProxyTab({ draft, setDraft, hasPassword, password, setPassword }: Proxy
 
 function AppearanceTab({ draft, setDraft }: DraftProps) {
   const a = draft.appearance;
+  const [fonts, setFonts] = useState<FontFamily[]>([]);
+  useEffect(() => {
+    api.listFonts().then(setFonts).catch(() => {});
+  }, []);
+
+  const set = (p: Partial<Settings["appearance"]>) => setDraft({ ...draft, appearance: { ...a, ...p } });
+  const fontOptions = [
+    { name: "", localName: "系统默认", monospaced: false } as FontFamily,
+    ...fonts,
+  ];
+  const display = (f: FontFamily) => (f.localName === f.name ? f.name : `${f.localName} (${f.name})`);
+  const preview = (family: string) => (family ? `"${family}"` : "");
+
   return (
-    <Section title="外观">
-      <label className="field">
-        <span>主题</span>
-        <select
-          value={a.theme}
-          onChange={(e) =>
-            setDraft({ ...draft, appearance: { ...a, theme: e.currentTarget.value as Settings["appearance"]["theme"] } })
-          }
+    <>
+      <Section title="主题与密度">
+        <label className="field">
+          <span>主题</span>
+          <select
+            value={a.theme}
+            onChange={(e) => set({ theme: e.currentTarget.value as Settings["appearance"]["theme"] })}
+          >
+            <option value="system">跟随系统</option>
+            <option value="light">浅色</option>
+            <option value="dark">深色</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>列表密度</span>
+          <select
+            value={a.density}
+            onChange={(e) => set({ density: e.currentTarget.value as Settings["appearance"]["density"] })}
+          >
+            <option value="comfortable">舒适</option>
+            <option value="compact">紧凑</option>
+          </select>
+        </label>
+      </Section>
+
+      <Section title="界面字体" desc="侧栏、列表和设置使用的字体。">
+        <label className="field">
+          <span>字体</span>
+          <select value={a.uiFamily} onChange={(e) => set({ uiFamily: e.currentTarget.value })}>
+            {fontOptions.map((f) => (
+              <option key={f.name} value={f.name}>
+                {display(f)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>字号</span>
+          <select value={a.uiScale} onChange={(e) => set({ uiScale: Number(e.currentTarget.value) })}>
+            {[80, 90, 100, 110, 120, 135, 150].map((n) => (
+              <option key={n} value={n}>
+                {n}%
+              </option>
+            ))}
+          </select>
+        </label>
+        <p
+          className="font-preview"
+          style={{ fontFamily: preview(a.uiFamily), fontSize: `${(14 * a.uiScale) / 100}px` }}
         >
-          <option value="system">跟随系统</option>
-          <option value="light">浅色</option>
-          <option value="dark">深色</option>
-        </select>
-      </label>
-      <label className="field">
-        <span>列表密度</span>
-        <select
-          value={a.density}
-          onChange={(e) =>
-            setDraft({
-              ...draft,
-              appearance: { ...a, density: e.currentTarget.value as Settings["appearance"]["density"] },
-            })
-          }
+          邮件摘要预览 Aa Bb 123 — The quick brown fox jumps over the lazy dog
+        </p>
+      </Section>
+
+      <Section title="邮件正文字体" desc="只影响没有自带样式的邮件（普通来信、纯文本）；营销邮件用自己的字体。">
+        <label className="field">
+          <span>字体</span>
+          <select value={a.mailFamily} onChange={(e) => set({ mailFamily: e.currentTarget.value })}>
+            {fontOptions.map((f) => (
+              <option key={f.name} value={f.name}>
+                {display(f)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>字号</span>
+          <select value={a.mailFontSize || 14} onChange={(e) => set({ mailFontSize: Number(e.currentTarget.value) })}>
+            {[12, 13, 14, 15, 16, 18, 20, 24].map((n) => (
+              <option key={n} value={n}>
+                {n} px
+              </option>
+            ))}
+          </select>
+        </label>
+        <p
+          className="font-preview mail"
+          style={{ fontFamily: preview(a.mailFamily), fontSize: `${a.mailFontSize || 14}px` }}
         >
-          <option value="comfortable">舒适</option>
-          <option value="compact">紧凑</option>
-        </select>
-      </label>
-    </Section>
+          你好，这是邮件正文的预览效果。上周会议的纪要已经整理好，请查收附件。
+        </p>
+      </Section>
+    </>
   );
 }
 

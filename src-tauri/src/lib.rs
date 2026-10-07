@@ -1,16 +1,18 @@
 mod accounts;
 mod db;
+mod fonts;
 mod imap_client;
 mod mail;
 mod net;
 mod oauth;
 mod render;
+mod rules;
 mod secrets;
 mod settings;
 mod sync;
 
 use accounts::{AccountConfig, AccountStore, AuthKind};
-use db::Db;
+use db::{Category, Db, View};
 use imap_client::{Auth, Credentials};
 use mail::Envelope;
 use oauth::OAuthProvider;
@@ -56,6 +58,11 @@ impl AppState {
     fn with_session<T>(&self, email: &str, f: impl FnOnce(&Credentials) -> Result<T, String>) -> Result<T, String> {
         let account = self.store.get(email)?;
         f(&self.credentials(&account)?)
+    }
+
+    /// 确保账号有默认分类（幂等，新增账号时调用）
+    fn ensure_categories(&self, email: &str) {
+        self.db.default_categories(email).ok();
     }
 
     /// 优先从本地缓存取原始邮件，没有再从服务器下载并缓存
@@ -156,6 +163,7 @@ async fn save_password_account(app: AppHandle, account: AccountInput, is_new: bo
             imap_client::verify(&creds).map_err(|e| format!("连接失败: {e}"))?;
         }
         state.store.upsert(config.clone())?;
+        state.ensure_categories(&config.email);
         Ok(config)
     })
     .await
@@ -346,9 +354,17 @@ async fn clear_cache(app: AppHandle, bodies_only: bool) -> Result<(), String> {
 // ---------- 邮件列表 ----------
 
 #[tauri::command]
-async fn list_cached(app: AppHandle, email: String, limit: u32) -> Result<Vec<Envelope>, String> {
+async fn list_cached(app: AppHandle, email: String, view: Option<i64>, limit: u32) -> Result<Vec<Envelope>, String> {
     let state = app_state(&app);
-    blocking(move || state.db.list_envelopes(&email, INBOX, limit)).await
+    blocking(move || {
+        let v = match view {
+            None => View::Inbox,
+            Some(id) if id < 0 => View::All,
+            Some(id) => View::Category(id),
+        };
+        state.db.list_envelopes(&email, INBOX, limit, v)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -361,7 +377,104 @@ async fn sync_inbox(app: AppHandle, email: String) -> Result<SyncStats, String> 
     .await
 }
 
-// ---------- 阅读 ----------
+// ---------- 分类与规则 ----------
+
+#[tauri::command]
+fn list_categories(state: State<Arc<AppState>>, email: String) -> Result<Vec<Category>, String> {
+    state.ensure_categories(&email);
+    state.db.list_categories(&email)
+}
+
+#[tauri::command]
+async fn create_category(app: AppHandle, email: String, name: String, color: String) -> Result<Category, String> {
+    let state = app_state(&app);
+    blocking(move || state.db.create_category(&email, &name, &color)).await
+}
+
+#[tauri::command]
+async fn update_category(
+    app: AppHandle,
+    email: String,
+    id: i64,
+    name: Option<String>,
+    color: Option<String>,
+) -> Result<(), String> {
+    let state = app_state(&app);
+    blocking(move || state.db.update_category(&email, id, name.as_deref(), color.as_deref())).await
+}
+
+#[tauri::command]
+async fn delete_category(app: AppHandle, email: String, id: i64) -> Result<bool, String> {
+    let state = app_state(&app);
+    blocking(move || state.db.delete_category(&email, id)).await
+}
+
+#[tauri::command]
+fn reorder_categories(state: State<Arc<AppState>>, email: String, ids: Vec<i64>) -> Result<(), String> {
+    state.db.reorder_categories(&email, &ids)
+}
+
+/// view: None 收件箱，Some(id) 移入分类，Some(-1) 移回收件箱
+#[tauri::command]
+async fn move_messages(app: AppHandle, email: String, uids: Vec<u32>, view: Option<i64>) -> Result<usize, String> {
+    let state = app_state(&app);
+    blocking(move || {
+        let category = view.filter(|v| *v >= 0);
+        state.db.move_messages(&email, &uids, category)
+    })
+    .await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuleWithCategory {
+    #[serde(flatten)]
+    rule: rules::Rule,
+    category_name: String,
+    category_color: String,
+}
+
+#[tauri::command]
+fn list_rules(state: State<Arc<AppState>>, email: String) -> Result<Vec<RuleWithCategory>, String> {
+    let rules = state.db.list_rules(&email)?;
+    let categories = state.db.list_categories(&email)?;
+    Ok(rules
+        .into_iter()
+        .map(|rule| {
+            let cat = categories.iter().find(|c| c.id == rule.category_id);
+            RuleWithCategory {
+                rule,
+                category_name: cat.map_or_else(|| "已删除".into(), |c| c.name.clone()),
+                category_color: cat.map_or_else(|| "#6e7781".into(), |c| c.color.clone()),
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn add_rule(
+    app: AppHandle,
+    email: String,
+    pattern: String,
+    category_id: i64,
+    apply_existing: bool,
+) -> Result<usize, String> {
+    let state = app_state(&app);
+    blocking(move || state.db.add_rule(&email, &pattern, category_id, apply_existing).map(|(_, moved)| moved)).await
+}
+
+#[tauri::command]
+async fn delete_rule(app: AppHandle, email: String, id: i64) -> Result<(), String> {
+    let state = app_state(&app);
+    blocking(move || state.db.delete_rule(&email, id)).await
+}
+
+// ---------- 字体 ----------
+
+#[tauri::command]
+fn list_fonts() -> &'static [fonts::FontFamily] {
+    fonts::system_fonts()
+}
 
 /// 发件人是否在信任列表里（完整地址或 @域名）
 fn is_trusted(sender: &str, trusted: &[String]) -> bool {
@@ -392,7 +505,9 @@ async fn get_message(
 ) -> Result<MessageResponse, String> {
     let state = app_state(&app);
     blocking(move || {
-        let reading = state.settings.get().reading;
+        let settings = state.settings.get();
+        let reading = &settings.reading;
+        let reading_fonts = settings.appearance.fonts.clone();
         let remote_allowed = allow_remote
             || reading.remote_images == RemoteImages::Allow
             || is_trusted(&sender, &reading.trusted_senders);
@@ -403,6 +518,8 @@ async fn get_message(
             app_dark,
             preference: reading.email_dark_mode,
             force_dark,
+            mail_family: &reading_fonts.mail_family,
+            mail_font_size: reading_fonts.mail_font_size,
         };
         Ok(MessageResponse { view: render::render(&raw, &route, &opts)?, remote_allowed })
     })
@@ -540,6 +657,16 @@ pub fn run() {
             clear_cache,
             list_cached,
             sync_inbox,
+            list_categories,
+            create_category,
+            update_category,
+            delete_category,
+            reorder_categories,
+            move_messages,
+            list_rules,
+            add_rule,
+            delete_rule,
+            list_fonts,
             get_message,
             set_seen,
             save_attachment,

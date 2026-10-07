@@ -95,6 +95,8 @@ fn sync_with_session(
     window: u32,
 ) -> Result<SyncStats, String> {
     let e = |e: imap::Error| e.to_string();
+    let rules = std::cell::RefCell::new(db.list_rules(account).ok());
+    let default_category = db.default_category(account).ok().flatten();
 
     let mailbox = session.select(folder).map_err(e)?;
     let server_validity = mailbox.uid_validity.unwrap_or(0);
@@ -121,7 +123,19 @@ fn sync_with_session(
     let new_envelopes = if plan.new_uids.is_empty() {
         vec![]
     } else {
-        imap_client::fetch_headers(session, &uid_set(&plan.new_uids)).map_err(e)?
+        imap_client::fetch_headers(session, &uid_set(&plan.new_uids))
+            .map_err(e)?
+            .into_iter()
+            .map(|mut env| {
+                // 新邮件按发件人规则自动归类
+                env.category_id = rules
+                    .borrow()
+                    .as_ref()
+                    .and_then(|r| crate::rules::match_sender(r, &env.from_address, &env.from_name))
+                    .or(default_category);
+                env
+            })
+            .collect()
     };
 
     db.apply_sync(account, folder, &plan.deleted, &plan.flag_changes, &new_envelopes)?;

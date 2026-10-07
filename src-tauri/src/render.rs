@@ -94,15 +94,6 @@ pub enum DarkPreference {
     Never,
 }
 
-pub struct RenderOptions {
-    pub allow_remote: bool,
-    /// 应用当前是否处于深色主题
-    pub app_dark: bool,
-    pub preference: DarkPreference,
-    /// 阅读区里手动切换：Some(true) 深色，Some(false) 浅色
-    pub force_dark: Option<bool>,
-}
-
 /// 从属性或样式中取出一个值，如 `background-color: #fff;` 里的 `#fff`
 fn value_after(s: &str) -> &str {
     let s = s.trim_start_matches([' ', '"', '\'', '\t']);
@@ -289,7 +280,21 @@ pub fn choose_mode(kind: ContentKind, app_dark: bool, pref: DarkPreference, forc
     }
 }
 
-const BASE_STYLE: &str = r#"body{margin:16px;font-family:system-ui,"Microsoft YaHei UI",sans-serif;font-size:14px;line-height:1.6;word-wrap:break-word}img{max-width:100%;height:auto}"#;
+/// 正文基础样式。family / size 来自字体设置，空值用默认
+fn base_style(family: &str, size: u32) -> String {
+    // 字体名里的引号和反斜杠会破坏 CSS，去掉
+    let clean = |s: &str| s.replace( '\u{27}' , "").replace( '"' , "").replace( '\\' , "");
+    let font_stack = if family.is_empty() {
+        "system-ui,\"Microsoft YaHei UI\",sans-serif".to_string()
+    } else {
+        // 自选字体放在最前，后面跟默认栈作回退
+        format!("\"{}\",system-ui,\"Microsoft YaHei UI\",sans-serif", clean(family))
+    };
+    let size = if size == 0 { 14 } else { size };
+    format!(
+        r#"body{{margin:16px;font-family:{font_stack};font-size:{size}px;line-height:1.6;word-wrap:break-word}}img{{max-width:100%;height:auto}}"#
+    )
+}
 
 fn mode_style(mode: RenderMode) -> &'static str {
     match mode {
@@ -393,8 +398,21 @@ pub fn has_remote_content(html: &str) -> bool {
     })
 }
 
-/// 包装成带 CSP 的完整文档。meta 放在最前面，浏览器会把它归入隐式的 <head>
+/// 包装成带 CSP 的完整文档（默认字体）。meta 放在最前面，浏览器会把它归入隐式的 <head>
+#[allow(dead_code)]
 pub fn wrap_document(body: &str, allow_remote: bool, base: &str, mode: RenderMode) -> String {
+    wrap_document_with_fonts(body, allow_remote, base, mode, "", 0)
+}
+
+/// 带字体设置的版本
+pub fn wrap_document_with_fonts(
+    body: &str,
+    allow_remote: bool,
+    base: &str,
+    mode: RenderMode,
+    mail_family: &str,
+    mail_font_size: u32,
+) -> String {
     let remote = if allow_remote { " https: http:" } else { "" };
     let csp = format!(
         "default-src 'none'; script-src 'none'; img-src {base} data:{remote}; \
@@ -402,8 +420,9 @@ pub fn wrap_document(body: &str, allow_remote: bool, base: &str, mode: RenderMod
     );
     // Plain 邮件不含颜色样式，我们的样式放在前面即可；其余模式也不覆盖邮件自己的样式
     format!(
-        r#"<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="{csp}"><base target="_blank"><style>{}{BASE_STYLE}</style>{body}"#,
-        mode_style(mode)
+        r#"<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="{csp}"><base target="_blank"><style>{}{}</style>{body}"#,
+        mode_style(mode),
+        base_style(mail_family, mail_font_size)
     )
 }
 
@@ -463,6 +482,18 @@ pub fn parse(raw: &[u8]) -> Option<Message<'_>> {
     MessageParser::default().parse(raw)
 }
 
+pub struct RenderOptions<'a> {
+    pub allow_remote: bool,
+    /// 应用当前是否处于深色主题
+    pub app_dark: bool,
+    pub preference: DarkPreference,
+    /// 阅读区里手动切换：Some(true) 深色，Some(false) 浅色
+    pub force_dark: Option<bool>,
+    /// 邮件正文字体设置
+    pub mail_family: &'a str,
+    pub mail_font_size: u32,
+}
+
 pub fn render(raw: &[u8], route_base: &PartRoute, opts: &RenderOptions) -> Result<MessageView, String> {
     let msg = parse(raw).ok_or("无法解析邮件")?;
     let base = protocol_base();
@@ -515,7 +546,7 @@ pub fn render(raw: &[u8], route_base: &PartRoute, opts: &RenderOptions) -> Resul
         cc: format_addresses(msg.cc()),
         date: msg.date().map(|d| d.to_rfc3339()),
         has_remote_content: has_remote_content(&body),
-        html: wrap_document(&body, opts.allow_remote, &base, render_mode),
+        html: wrap_document_with_fonts(&body, opts.allow_remote, &base, render_mode, opts.mail_family, opts.mail_font_size),
         attachments,
         content_kind,
         render_mode,
@@ -599,8 +630,15 @@ mod tests {
         }
     }
 
-    fn light() -> RenderOptions {
-        RenderOptions { allow_remote: false, app_dark: false, preference: DarkPreference::Auto, force_dark: None }
+    fn light() -> RenderOptions<'static> {
+        RenderOptions {
+            allow_remote: false,
+            app_dark: false,
+            preference: DarkPreference::Auto,
+            force_dark: None,
+            mail_family: "",
+            mail_font_size: 0,
+        }
     }
 
     #[test]
@@ -699,6 +737,21 @@ mod tests {
         for (html, want) in cases {
             assert_eq!(declared_dark_support(html), want, "{html}");
         }
+    }
+
+    #[test]
+    fn builds_font_style() {
+        let doc = wrap_document_with_fonts("<p>x</p>", false, "m", RenderMode::Light, "楷体", 18);
+        assert!(doc.contains(r#"font-family:"楷体",system-ui"#));
+        assert!(doc.contains("font-size:18px"));
+        // 非法字符被清理
+        let doc = wrap_document_with_fonts("<p>x</p>", false, "m", RenderMode::Light, "a\"b", 0);
+        assert!(doc.contains(r#"font-family:"ab",system-ui"#));
+        assert!(doc.contains("font-size:14px"));
+        // 默认
+        let doc = wrap_document_with_fonts("<p>x</p>", false, "m", RenderMode::Light, "", 0);
+        assert!(doc.contains("font-family:system-ui"));
+        assert!(doc.contains("font-size:14px"));
     }
 
     #[test]

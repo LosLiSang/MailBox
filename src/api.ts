@@ -8,6 +8,7 @@ export type Envelope = {
   fromAddress: string;
   date: string | null;
   seen: boolean;
+  categoryId: number | null;
 };
 
 export type AuthKind = "password" | "google" | "microsoft";
@@ -60,7 +61,14 @@ export type Settings = {
     markReadOnOpen: boolean;
     emailDarkMode: EmailDarkMode;
   };
-  appearance: { theme: "system" | "light" | "dark"; density: "comfortable" | "compact" };
+  appearance: {
+    theme: "system" | "light" | "dark";
+    density: "comfortable" | "compact";
+    uiFamily: string;
+    uiScale: number;
+    mailFamily: string;
+    mailFontSize: number;
+  };
   oauth: { googleClientId: string; googleClientSecret: string; microsoftClientId: string };
 };
 
@@ -70,6 +78,12 @@ export type CacheStats = {
   fileBytes: number;
   accounts: { email: string; headers: number; bodies: number; bodyBytes: number }[];
 };
+
+export type Category = { id: number; name: string; color: string; count: number };
+
+export type Rule = { id: number; pattern: string; categoryId: number; categoryName: string; categoryColor: string };
+
+export type FontFamily = { name: string; localName: string; monospaced: boolean };
 
 export const LIST_LIMIT = 500;
 
@@ -98,8 +112,24 @@ export const api = {
   cacheStats: () => invoke<CacheStats>("cache_stats"),
   clearCache: (bodiesOnly: boolean) => invoke<void>("clear_cache", { bodiesOnly }),
 
-  listCached: (email: string, limit = LIST_LIMIT) => invoke<Envelope[]>("list_cached", { email, limit }),
+  listCached: (email: string, view: number | null, limit = LIST_LIMIT) =>
+    invoke<Envelope[]>("list_cached", { email, view, limit }),
   syncInbox: (email: string) => invoke<SyncStats>("sync_inbox", { email }),
+
+  listCategories: (email: string) => invoke<Category[]>("list_categories", { email }),
+  createCategory: (email: string, name: string, color: string) =>
+    invoke<Category>("create_category", { email, name, color }),
+  updateCategory: (email: string, id: number, name: string | null, color: string | null) =>
+    invoke<void>("update_category", { email, id, name, color }),
+  deleteCategory: (email: string, id: number) => invoke<boolean>("delete_category", { email, id }),
+  reorderCategories: (email: string, ids: number[]) => invoke<void>("reorder_categories", { email, ids }),
+  moveMessages: (email: string, uids: number[], view: number | null) =>
+    invoke<number>("move_messages", { email, uids, view }),
+  listRules: (email: string) => invoke<Rule[]>("list_rules", { email }),
+  addRule: (email: string, pattern: string, categoryId: number, applyExisting: boolean) =>
+    invoke<number>("add_rule", { email, pattern, categoryId, applyExisting }),
+  deleteRule: (email: string, id: number) => invoke<void>("delete_rule", { email, id }),
+  listFonts: () => invoke<FontFamily[]>("list_fonts"),
 
   getMessage: (
     email: string,

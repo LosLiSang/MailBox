@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type EmailDarkMode, type Envelope, type MessageView } from "../api";
+import { api, type Category, type EmailDarkMode, type Envelope, type MessageView } from "../api";
 import { domainOf, formatFullDate, formatSize } from "../format";
 import { frameBackground } from "../theme";
 import { Avatar } from "./Avatar";
@@ -17,6 +17,9 @@ type Props = {
   settingsVersion: string;
   /** 切换正文深浅色：写入设置，对之后打开的所有邮件生效 */
   onDarkModeChange: (mode: EmailDarkMode) => Promise<void>;
+  categories: Category[];
+  /** 把当前邮件移到分类；null 移回收件箱 */
+  onMove: (view: number | null) => void;
 };
 
 type ViewState =
@@ -25,7 +28,8 @@ type ViewState =
   | { status: "ok"; view: MessageView };
 
 export function Reader(props: Props) {
-  const { email, mail, onToggleSeen, onNotice, onTrustSender, appDark, settingsVersion, onDarkModeChange } = props;
+  const { email, mail, onToggleSeen, onNotice, onTrustSender, appDark, settingsVersion, onDarkModeChange, categories, onMove } =
+    props;
   const [state, setState] = useState<ViewState>({ status: "loading" });
   const [allowRemote, setAllowRemote] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -93,6 +97,27 @@ export function Reader(props: Props) {
         <div className="reader-title">
           <h2>{view.subject}</h2>
           <div className="reader-title-actions">
+            {categories.length > 0 && (
+              <select
+                className="ghost small move-select"
+                value=""
+                title="移动到分类"
+                onChange={(e) => {
+                  if (e.currentTarget.value === "") return;
+                  onMove(e.currentTarget.value === "inbox" ? null : Number(e.currentTarget.value));
+                }}
+              >
+                <option value="">移动到…</option>
+                {mail.categoryId !== null && <option value="inbox">📥 收件箱</option>}
+                {categories
+                  .filter((c) => c.id !== mail.categoryId)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+              </select>
+            )}
             {appDark && !nativeDark && (
               <button
                 className="ghost small"

@@ -56,6 +56,31 @@ impl Default for ReadingSettings {
     }
 }
 
+/// 字体设置：None 表示用系统默认
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FontSettings {
+    /// 界面字体家族名（本机字体列表里的 name）
+    pub ui_family: String,
+    /// 界面字号缩放百分比，100 = 默认 14px
+    pub ui_scale: u32,
+    /// 邮件正文字体家族名；空 = 默认无衬线栈
+    pub mail_family: String,
+    /// 邮件正文字号 px；0 = 默认 14px
+    pub mail_font_size: u32,
+}
+
+impl Default for FontSettings {
+    fn default() -> Self {
+        Self { ui_family: String::new(), ui_scale: 100, mail_family: String::new(), mail_font_size: 0 }
+    }
+}
+
+pub const UI_SCALE_MIN: u32 = 80;
+pub const UI_SCALE_MAX: u32 = 150;
+pub const MAIL_FONT_SIZE_MIN: u32 = 12;
+pub const MAIL_FONT_SIZE_MAX: u32 = 24;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppearanceSettings {
@@ -63,6 +88,8 @@ pub struct AppearanceSettings {
     pub theme: String,
     /// comfortable / compact
     pub density: String,
+    #[serde(flatten)]
+    pub fonts: FontSettings,
 }
 
 /// 自己在 Google Cloud / Azure 注册的 OAuth 应用
@@ -116,6 +143,12 @@ pub fn normalize(mut s: Settings) -> Result<Settings, String> {
     if s.appearance.density != "compact" {
         s.appearance.density = "comfortable".into();
     }
+    let f = &mut s.appearance.fonts;
+    f.ui_family = f.ui_family.trim().to_string();
+    f.mail_family = f.mail_family.trim().to_string();
+    // 字号缩放选一个 5 的倍数或 UI_SCALE_MIN，与设置页的选项对应
+    f.ui_scale = f.ui_scale.clamp(UI_SCALE_MIN, UI_SCALE_MAX);
+    f.mail_font_size = f.mail_font_size.clamp(MAIL_FONT_SIZE_MIN, MAIL_FONT_SIZE_MAX);
 
     for v in [&mut s.oauth.google_client_id, &mut s.oauth.google_client_secret, &mut s.oauth.microsoft_client_id] {
         *v = v.trim().to_string();
@@ -188,6 +221,8 @@ mod tests {
         assert_eq!(partial.sync.auto_sync_minutes, 5);
         assert_eq!(partial.reading.remote_images, RemoteImages::Block);
         assert_eq!(partial.reading.email_dark_mode, DarkPreference::Auto);
+        assert_eq!(partial.appearance.fonts.ui_scale, 100);
+        assert_eq!(partial.appearance.fonts.mail_font_size, 0);
     }
 
     #[test]
@@ -205,6 +240,13 @@ mod tests {
         assert_eq!(s.appearance.density, "comfortable");
         assert_eq!(s.sync.auto_sync_minutes, 1440);
         assert_eq!(s.proxy.host, "127.0.0.1");
+
+        // 字体设置被限定在合法范围内
+        let mut s = Settings::default();
+        s.appearance.fonts.ui_scale = 500;
+        s.appearance.fonts.mail_font_size = 99;
+        let s = normalize(s).unwrap();
+        assert_eq!((s.appearance.fonts.ui_scale, s.appearance.fonts.mail_font_size), (UI_SCALE_MAX, MAIL_FONT_SIZE_MAX));
     }
 
     #[test]

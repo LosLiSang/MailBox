@@ -976,3 +976,165 @@ input:disabled {
   margin: -6px 0 4px 24px !important;
   font-size: 12px;
 }
+
+/* ---------- 分类视图 / 侧栏 ---------- */
+
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.views {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.view-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.view-item:hover {
+  background: var(--hover);
+}
+
+.view-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.view-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.view-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ---------- 邮件列表右键菜单 / 标签 ---------- */
+
+.mail-list li {
+  position: relative;
+}
+
+.mail-row-right {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.cat-chip {
+  padding: 1px 7px;
+  border-radius: 9px;
+  color: #fff;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.move-menu {
+  position: absolute;
+  top: 100%;
+  right: 12px;
+  z-index: 30;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.move-menu-title {
+  padding: 4px 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.move-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+}
+
+.move-menu-item:hover {
+  background: var(--accent-soft);
+}
+
+/* ---------- 阅读区移动下拉 ---------- */
+
+.move-select {
+  padding: 3px 6px;
+}
+
+.font-preview {
+  max-width: 520px;
+  padding: 10px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+
+.font-preview.mail {
+  line-height: 1.7;
+}
+
+.category-row {
+  gap: 10px;
+}
+
+.color-row {
+  display: flex;
+  gap: 6px;
+}
+
+.color-dot {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+}
+
+.color-dot.active {
+  border-color: var(--text);
+}
+
+/* ---------- 字体 / 缩放变量 ---------- */
+
+:root {
+  --ui-font: "";
+  --ui-scale: 1;
+  --mail-font: "";
+  --mail-size: 14px;
+
+  font-family: var(--ui-font), system-ui, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  font-size: calc(14px * var(--ui-scale));
+}

@@ -14,6 +14,8 @@ pub struct Envelope {
     /// RFC 3339 格式；解析失败时为 None
     pub date: Option<String>,
     pub seen: bool,
+    /// 本地分类；None 表示在收件箱
+    pub category_id: Option<i64>,
 }
 
 pub fn parse_envelope(uid: u32, header: &[u8], seen: bool) -> Envelope {
@@ -39,6 +41,7 @@ pub fn parse_envelope(uid: u32, header: &[u8], seen: bool) -> Envelope {
         from_address,
         date,
         seen,
+        category_id: None,
     }
 }
 
