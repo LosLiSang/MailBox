@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, type Envelope, type MessageView } from "../api";
-import { formatFullDate, formatSize } from "../format";
+import { api, type EmailDarkMode, type Envelope, type MessageView } from "../api";
+import { domainOf, formatFullDate, formatSize } from "../format";
+import { frameBackground } from "../theme";
 import { Avatar } from "./Avatar";
 
 type Props = {
@@ -8,6 +9,14 @@ type Props = {
   mail: Envelope;
   onToggleSeen: (mail: Envelope) => void;
   onNotice: (text: string) => void;
+  /** 把发件人（地址或 @域名）加入信任列表 */
+  onTrustSender: (entry: string) => Promise<void>;
+  /** 应用当前实际是否深色 */
+  appDark: boolean;
+  /** 设置变化时重新渲染（深色策略、信任列表等） */
+  settingsVersion: string;
+  /** 切换正文深浅色：写入设置，对之后打开的所有邮件生效 */
+  onDarkModeChange: (mode: EmailDarkMode) => Promise<void>;
 };
 
 type ViewState =
@@ -15,25 +24,24 @@ type ViewState =
   | { status: "error"; message: string }
   | { status: "ok"; view: MessageView };
 
-export function Reader({ email, mail, onToggleSeen, onNotice }: Props) {
+export function Reader(props: Props) {
+  const { email, mail, onToggleSeen, onNotice, onTrustSender, appDark, settingsVersion, onDarkModeChange } = props;
   const [state, setState] = useState<ViewState>({ status: "loading" });
   const [allowRemote, setAllowRemote] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-
-  // 切换邮件时重置远程图片开关
-  useEffect(() => setAllowRemote(false), [email, mail.uid]);
+  const sender = mail.fromAddress.toLowerCase();
 
   useEffect(() => {
     let cancelled = false;
-    setState((s) => (s.status === "ok" && allowRemote ? s : { status: "loading" }));
+    setState((s) => (s.status === "ok" ? s : { status: "loading" }));
     api
-      .getMessage(email, mail.uid, allowRemote)
+      .getMessage(email, mail.uid, sender, { allowRemote, appDark })
       .then((view) => !cancelled && setState({ status: "ok", view }))
       .catch((err) => !cancelled && setState({ status: "error", message: String(err) }));
     return () => {
       cancelled = true;
     };
-  }, [email, mail.uid, allowRemote, reloadKey]);
+  }, [email, mail.uid, sender, allowRemote, appDark, reloadKey, settingsVersion]);
 
   async function attachmentAction(part: number, action: "open" | "save") {
     try {
@@ -45,6 +53,11 @@ export function Reader({ email, mail, onToggleSeen, onNotice }: Props) {
     } catch (err) {
       onNotice(`附件操作失败: ${err}`);
     }
+  }
+
+  async function trust(entry: string) {
+    await onTrustSender(entry);
+    setReloadKey((k) => k + 1);
   }
 
   if (state.status === "loading") {
@@ -68,19 +81,38 @@ export function Reader({ email, mail, onToggleSeen, onNotice }: Props) {
   }
 
   const { view } = state;
-  const sender = mail.fromName || mail.fromAddress;
+  const senderName = mail.fromName || mail.fromAddress;
+  const domain = domainOf(sender);
+  // 邮件本身是深色设计时原样就是深色，不提供切换
+  const nativeDark = view.contentKind === "dark";
+  const bodyIsDark = nativeDark || view.renderMode !== "light";
 
   return (
     <div className="reader">
       <header className="reader-header">
         <div className="reader-title">
           <h2>{view.subject}</h2>
-          <button className="ghost small" onClick={() => onToggleSeen(mail)}>
-            {mail.seen ? "标为未读" : "标为已读"}
-          </button>
+          <div className="reader-title-actions">
+            {appDark && !nativeDark && (
+              <button
+                className="ghost small"
+                onClick={() => onDarkModeChange(bodyIsDark ? "never" : "always")}
+                title={
+                  bodyIsDark
+                    ? "之后所有邮件都用白底原样显示（可在设置中改回智能）"
+                    : "之后所有邮件都用深色显示（可在设置中改回智能）"
+                }
+              >
+                {bodyIsDark ? "☀ 原样" : "🌙 深色"}
+              </button>
+            )}
+            <button className="ghost small" onClick={() => onToggleSeen(mail)}>
+              {mail.seen ? "标为未读" : "标为已读"}
+            </button>
+          </div>
         </div>
         <div className="reader-meta">
-          <Avatar name={sender} seed={mail.fromAddress || sender} size={40} />
+          <Avatar name={senderName} seed={mail.fromAddress || senderName} size={40} />
           <div className="reader-addresses">
             <div className="reader-from">{view.from}</div>
             {view.to && <div className="muted">收件人：{view.to}</div>}
@@ -90,12 +122,24 @@ export function Reader({ email, mail, onToggleSeen, onNotice }: Props) {
         </div>
       </header>
 
-      {view.hasRemoteContent && !allowRemote && (
+      {view.hasRemoteContent && !view.remoteAllowed && (
         <div className="remote-banner">
           <span>🛡️ 已阻止远程图片，防止发件人追踪你是否打开了邮件</span>
-          <button className="ghost small" onClick={() => setAllowRemote(true)}>
-            显示图片
-          </button>
+          <span className="banner-actions">
+            <button className="ghost small" onClick={() => setAllowRemote(true)}>
+              显示图片
+            </button>
+            {sender && (
+              <button className="ghost small" onClick={() => trust(sender)} title="以后自动显示这个发件人的图片">
+                总是信任此发件人
+              </button>
+            )}
+            {domain && (
+              <button className="ghost small" onClick={() => trust(domain)} title={`信任所有 ${domain} 的邮件`}>
+                信任 {domain}
+              </button>
+            )}
+          </span>
         </div>
       )}
 
@@ -118,10 +162,16 @@ export function Reader({ email, mail, onToggleSeen, onNotice }: Props) {
       {/* 不加 allow-scripts / allow-same-origin：邮件 HTML 无法执行脚本、无法访问应用。
           allow-popups 让链接能发出新窗口请求，由 Rust 拦截后交给系统浏览器打开 */}
       <iframe
-        key={`${mail.uid}-${allowRemote}`}
+        key={`${mail.uid}-${view.remoteAllowed}-${view.renderMode}`}
         className="reader-frame"
         title="邮件正文"
         sandbox="allow-popups allow-popups-to-escape-sandbox"
+        style={{
+          background: frameBackground(view.renderMode, appDark),
+          // iframe 的 color-scheme 决定邮件里 prefers-color-scheme 的结果。
+          // 反色模式必须保持 light，否则邮件自己的深色样式生效后再被反色，又变回浅色
+          colorScheme: view.renderMode === "dark" || view.renderMode === "adaptive" ? "dark" : "light",
+        }}
         srcDoc={view.html}
       />
     </div>

@@ -12,8 +12,6 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
 pub const INBOX: &str = "INBOX";
-/// 首次同步最多拉取多少封，后续每次最多拉取多少封新邮件
-pub const WINDOW: u32 = 200;
 
 #[derive(Debug, Default, PartialEq)]
 pub struct SyncPlan {
@@ -81,9 +79,10 @@ pub fn sync_folder(
     creds: &imap_client::Credentials,
     account: &str,
     folder: &str,
+    window: u32,
 ) -> Result<SyncStats, String> {
     let mut session = imap_client::connect(creds).map_err(|e| e.to_string())?;
-    let result = sync_with_session(&mut session, db, account, folder);
+    let result = sync_with_session(&mut session, db, account, folder, window);
     session.logout().ok();
     result
 }
@@ -93,6 +92,7 @@ fn sync_with_session(
     db: &Db,
     account: &str,
     folder: &str,
+    window: u32,
 ) -> Result<SyncStats, String> {
     let e = |e: imap::Error| e.to_string();
 
@@ -113,11 +113,11 @@ fn sync_with_session(
             .filter(|(uid, _)| *uid >= min_uid)
             .collect()
     } else {
-        let range = recent_range(mailbox.exists, WINDOW).unwrap_or_default();
+        let range = recent_range(mailbox.exists, window).unwrap_or_default();
         imap_client::fetch_flags_by_seq(session, &range).map_err(e)?
     };
 
-    let plan = plan(&cached, &server, WINDOW as usize);
+    let plan = plan(&cached, &server, window as usize);
     let new_envelopes = if plan.new_uids.is_empty() {
         vec![]
     } else {

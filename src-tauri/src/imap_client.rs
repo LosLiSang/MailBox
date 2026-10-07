@@ -1,36 +1,75 @@
 //! IMAP 网络层。imap 2.x 是同步阻塞 API，由调用方放到阻塞线程里执行。
 
-use crate::mail::{parse_envelope, Envelope};
+use crate::{
+    mail::{parse_envelope, Envelope},
+    net::{self, ProxyConfig},
+    oauth,
+};
 use imap::types::{Fetch, Flag};
+
+pub enum Auth {
+    /// 密码 / 授权码 / 应用专用密码
+    Password(String),
+    /// OAuth access token，用 XOAUTH2 认证
+    OAuth(String),
+}
 
 pub struct Credentials<'a> {
     pub host: &'a str,
     pub port: u16,
     pub username: &'a str,
-    /// QQ/163 邮箱这里填「授权码」，不是登录密码
-    pub password: &'a str,
+    pub auth: Auth,
+    pub proxy: ProxyConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum MailError {
-    #[error("TLS 初始化失败: {0}")]
-    Tls(#[from] native_tls::Error),
+    #[error("{0}")]
+    Net(String),
+    #[error("TLS 握手失败: {0}")]
+    Tls(String),
     #[error("IMAP 错误: {0}")]
     Imap(#[from] imap::Error),
 }
 
 pub type Session = imap::Session<native_tls::TlsStream<std::net::TcpStream>>;
+type Client = imap::Client<native_tls::TlsStream<std::net::TcpStream>>;
 
-pub fn connect(c: &Credentials) -> Result<Session, MailError> {
-    let tls = native_tls::TlsConnector::builder().build()?;
-    let client = imap::connect((c.host, c.port), c.host, &tls)?;
-    // 注意：不要发 ID 命令。imap-proto 0.10 解析不了 `* ID (...)` 响应，
-    // 会留下未读的 tagged OK，导致后续命令标签错位并 panic。
-    // 网易邮箱要求 ID，需要等换成 async-imap 后再支持。
-    Ok(client.login(c.username, c.password).map_err(|(e, _)| e)?)
+struct XOAuth2(String);
+
+impl imap::Authenticator for XOAuth2 {
+    type Response = String;
+    fn process(&self, challenge: &[u8]) -> String {
+        // 首次质询为空，返回凭据；认证失败时服务器会带着错误详情再次质询，
+        // 按 XOAUTH2 协议回空串，服务器随后返回 NO 结束认证
+        if challenge.is_empty() { self.0.clone() } else { String::new() }
+    }
 }
 
-/// 仅验证能否登录，用于添加账号时校验授权码。
+/// 建立 TLS 连接并读取服务器问候，按配置走代理
+pub fn open(host: &str, port: u16, proxy: &ProxyConfig) -> Result<Client, MailError> {
+    let tcp = net::connect_tcp(proxy, host, port).map_err(MailError::Net)?;
+    let tls = native_tls::TlsConnector::new().map_err(|e| MailError::Tls(e.to_string()))?;
+    let stream = tls.connect(host, tcp).map_err(|e| MailError::Tls(e.to_string()))?;
+    let mut client = imap::Client::new(stream);
+    client.read_greeting()?;
+    Ok(client)
+}
+
+pub fn connect(c: &Credentials) -> Result<Session, MailError> {
+    let client = open(c.host, c.port, &c.proxy)?;
+    // 注意：不要发 ID 命令。imap-proto 0.10 解析不了 `* ID (...)` 响应，
+    // 会留下未读的 tagged OK，导致后续命令标签错位并 panic。
+    let session = match &c.auth {
+        Auth::Password(p) => client.login(c.username, p),
+        Auth::OAuth(token) => {
+            client.authenticate("XOAUTH2", &XOAuth2(oauth::xoauth2_payload(c.username, token)))
+        }
+    };
+    Ok(session.map_err(|(e, _)| e)?)
+}
+
+/// 仅验证能否登录
 pub fn verify(c: &Credentials) -> Result<(), MailError> {
     connect(c)?.logout().ok();
     Ok(())

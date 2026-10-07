@@ -1,26 +1,46 @@
 import { describe, expect, it } from "vitest";
 import {
-  detectProvider,
+  domainOf,
+  extractAddress,
   formatFullDate,
   formatMailDate,
   formatSize,
   hue,
   initials,
+  move,
+  parseSenderList,
   syncSummary,
 } from "./format";
+import { detectProvider, providerById, unsupportedReason } from "./providers";
 
 describe("detectProvider", () => {
   it.each([
-    ["123@qq.com", "imap.qq.com"],
-    [" ABC@QQ.COM ", "imap.qq.com"],
-    ["a@foxmail.com", "imap.qq.com"],
-    ["a@163.com", "imap.163.com"],
-    ["a@126.com", "imap.126.com"],
-    ["a@gmail.com", undefined],
+    ["123@qq.com", "qq"],
+    [" ABC@QQ.COM ", "qq"],
+    ["a@foxmail.com", "qq"],
+    ["a@gmail.com", "gmail"],
+    ["a@hotmail.com", "outlook"],
+    ["a@live.com", "outlook"],
+    ["a@icloud.com", "icloud"],
+    ["a@company.com", undefined],
     ["no-at-sign", undefined],
     ["", undefined],
-  ])("%s -> %s", (email, host) => {
-    expect(detectProvider(email)?.host).toBe(host);
+  ])("%s -> %s", (email, id) => {
+    expect(detectProvider(email)?.id).toBe(id);
+  });
+
+  it("未知 id 回退到自定义", () => {
+    expect(providerById("nope").id).toBe("custom");
+    expect(providerById("gmail").oauth).toBe("google");
+  });
+
+  it.each([
+    ["a@163.com", true],
+    ["a@126.com", true],
+    ["a@qq.com", false],
+    ["", false],
+  ])("unsupported %s -> %s", (email, blocked) => {
+    expect(Boolean(unsupportedReason(email))).toBe(blocked);
   });
 });
 
@@ -79,6 +99,41 @@ describe("syncSummary", () => {
   });
 });
 
+describe("parseSenderList", () => {
+  it.each([
+    ["", []],
+    ["a@qq.com", ["a@qq.com"]],
+    ["A@QQ.com\n@github.com, b@x.com；a@qq.com", ["a@qq.com", "@github.com", "b@x.com"]],
+    ["  \n , ", []],
+  ])("%j -> %j", (text, want) => {
+    expect(parseSenderList(text)).toEqual(want);
+  });
+});
+
+describe("extractAddress / domainOf", () => {
+  it.each([
+    ["张三 <ZS@QQ.com>", "zs@qq.com", "@qq.com"],
+    ["noreply@github.com", "noreply@github.com", "@github.com"],
+    ["  x@y.z  ", "x@y.z", "@y.z"],
+    ["no address", "no address", ""],
+  ])("%s", (from, address, domain) => {
+    expect(extractAddress(from)).toBe(address);
+    expect(domainOf(extractAddress(from))).toBe(domain);
+  });
+});
+
+describe("move", () => {
+  it.each([
+    [[1, 2, 3], 0, 2, [2, 3, 1]],
+    [[1, 2, 3], 2, 0, [3, 1, 2]],
+    [[1, 2, 3], 1, 1, [1, 2, 3]],
+    [[1, 2, 3], 0, 5, [1, 2, 3]],
+    [[1, 2, 3], -1, 0, [1, 2, 3]],
+  ])("%j %d->%d", (list, from, to, want) => {
+    expect(move(list, from, to)).toEqual(want);
+  });
+});
+
 describe("initials", () => {
   it.each([
     ["张三", "张"],
@@ -98,5 +153,29 @@ describe("hue", () => {
       expect(hue(s)).toBeGreaterThanOrEqual(0);
       expect(hue(s)).toBeLessThan(360);
     }
+  });
+});
+
+describe("theme", async () => {
+  const { resolveDark, frameBackground } = await import("./theme");
+
+  it.each([
+    ["system", false, false],
+    ["system", true, true],
+    ["light", true, false],
+    ["dark", false, true],
+  ] as const)("resolveDark(%s, system=%s) -> %s", (theme, system, want) => {
+    expect(resolveDark(theme, system)).toBe(want);
+  });
+
+  it.each([
+    ["dark", false, "#181b20"],
+    ["adaptive", false, "#181b20"],
+    ["invert", false, "#1a1a1a"],
+    ["light", true, "#ffffff"],
+    [undefined, true, "#181b20"],
+    [undefined, false, "#ffffff"],
+  ] as const)("frameBackground(%s, appDark=%s) -> %s", (mode, dark, want) => {
+    expect(frameBackground(mode, dark)).toBe(want);
   });
 });

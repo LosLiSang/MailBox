@@ -1,37 +1,3 @@
-export type Provider = {
-  name: string;
-  host: string;
-  port: number;
-  /** 获取授权码的说明 */
-  hint: string;
-};
-
-const QQ: Provider = {
-  name: "QQ 邮箱",
-  host: "imap.qq.com",
-  port: 993,
-  hint: "网页版 QQ 邮箱 → 设置 → 账号 → 开启 IMAP/SMTP 服务 → 生成授权码",
-};
-const NETEASE = (domain: string): Provider => ({
-  name: `网易 ${domain}`,
-  host: `imap.${domain}`,
-  port: 993,
-  hint: "网页版邮箱 → 设置 → POP3/SMTP/IMAP → 开启 IMAP 服务 → 新增授权密码",
-});
-
-const PROVIDERS: Record<string, Provider> = {
-  "qq.com": QQ,
-  "foxmail.com": QQ,
-  "163.com": NETEASE("163.com"),
-  "126.com": NETEASE("126.com"),
-  "yeah.net": NETEASE("yeah.net"),
-};
-
-export function detectProvider(email: string): Provider | undefined {
-  const domain = email.trim().split("@")[1]?.toLowerCase();
-  return domain ? PROVIDERS[domain] : undefined;
-}
-
 export function formatMailDate(iso: string | null, now = new Date()): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -78,6 +44,26 @@ export function syncSummary(stats: { added: number; deleted: number; updated: nu
   return parts.length ? parts.join("，") : "已是最新";
 }
 
+/** 信任发件人输入框：按换行/逗号/空格拆分，规整为小写并去重 */
+export function parseSenderList(text: string): string[] {
+  const items = text
+    .split(/[\s,，;；]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return [...new Set(items)];
+}
+
+/** 从 "张三 <a@b.com>" 或 "a@b.com" 中取出邮箱地址 */
+export function extractAddress(from: string): string {
+  const m = from.match(/<([^>]+)>/);
+  return (m ? m[1] : from).trim().toLowerCase();
+}
+
+export function domainOf(address: string): string {
+  const at = address.lastIndexOf("@");
+  return at >= 0 ? address.slice(at).toLowerCase() : "";
+}
+
 /** 头像文字：取名字首字符（中文取第一个字，英文取首字母大写） */
 export function initials(name: string): string {
   const first = Array.from(name.trim())[0];
@@ -89,4 +75,13 @@ export function hue(seed: string): number {
   let h = 0;
   for (const ch of seed) h = (h * 31 + ch.codePointAt(0)!) % 360;
   return h;
+}
+
+/** 把元素移动到新位置，返回新数组 */
+export function move<T>(list: T[], from: number, to: number): T[] {
+  if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return list;
+  const next = [...list];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
 }

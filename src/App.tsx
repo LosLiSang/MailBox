@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Account, type Envelope } from "./api";
-import { Avatar } from "./components/Avatar";
+import { api, type Account, type EmailDarkMode, type Envelope, type SettingsView } from "./api";
 import { AccountDialog } from "./components/AccountDialog";
+import { Avatar } from "./components/Avatar";
 import { MailList } from "./components/MailList";
 import { Reader } from "./components/Reader";
+import { SettingsPage, type SettingsTab } from "./components/SettingsPage";
 import { syncSummary } from "./format";
+import { providerById } from "./providers";
+import { useEffectiveDark } from "./theme";
 import "./App.css";
 
 type Inbox = {
@@ -12,23 +15,27 @@ type Inbox = {
   mails: Envelope[] | null;
   syncing: boolean;
   error: string | null;
-  lastSync: Date | null;
 };
 
-const EMPTY_INBOX: Inbox = { mails: null, syncing: false, error: null, lastSync: null };
+const EMPTY_INBOX: Inbox = { mails: null, syncing: false, error: null };
 
 export default function App() {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
+  const [settings, setSettings] = useState<SettingsView | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialog, setDialog] = useState<{ open: boolean; editing: Account | null }>({ open: false, editing: null });
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
   const [inboxes, setInboxes] = useState<Record<string, Inbox>>({});
   const [openUid, setOpenUid] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<number>(undefined);
+  /** 正在同步的账号，避免自动同步和手动同步重叠 */
+  const syncing = useRef(new Set<string>());
 
   const current = accounts?.find((a) => a.email === selected) ?? null;
   const inbox = (selected && inboxes[selected]) || EMPTY_INBOX;
   const openMail = inbox.mails?.find((m) => m.uid === openUid) ?? null;
+  const proxyConfigured = Boolean(settings && settings.proxy.kind !== "none" && settings.proxy.host);
 
   const patch = useCallback((email: string, p: Partial<Inbox>) => {
     setInboxes((all) => ({ ...all, [email]: { ...(all[email] ?? EMPTY_INBOX), ...p } }));
@@ -40,35 +47,65 @@ export default function App() {
     noticeTimer.current = window.setTimeout(() => setNotice(null), 4000);
   }, []);
 
-  /** 先秒开本地缓存，再后台增量同步 */
-  const load = useCallback(
-    async (email: string, { announce = false } = {}) => {
+  const loadCached = useCallback(
+    async (email: string) => {
       try {
         patch(email, { mails: await api.listCached(email) });
       } catch (err) {
         patch(email, { error: String(err) });
       }
+    },
+    [patch],
+  );
 
+  const sync = useCallback(
+    async (email: string, { announce = false } = {}) => {
+      if (syncing.current.has(email)) return;
+      syncing.current.add(email);
       patch(email, { syncing: true, error: null });
       try {
         const stats = await api.syncInbox(email);
-        patch(email, { mails: await api.listCached(email), syncing: false, lastSync: new Date() });
+        patch(email, { mails: await api.listCached(email), syncing: false });
         if (announce || stats.added > 0) showNotice(syncSummary(stats));
       } catch (err) {
         // 同步失败时保留缓存，只提示错误（离线也能看）
         patch(email, { syncing: false, error: String(err) });
+      } finally {
+        syncing.current.delete(email);
       }
     },
     [patch, showNotice],
   );
 
+  /** 先秒开本地缓存，再后台增量同步 */
+  const load = useCallback(
+    async (email: string) => {
+      await loadCached(email);
+      await sync(email);
+    },
+    [loadCached, sync],
+  );
+
   useEffect(() => {
-    api.listAccounts().then((list) => {
+    Promise.all([api.listAccounts(), api.getSettings()]).then(([list, s]) => {
+      setSettings(s);
       setAccounts(list);
       if (list.length > 0) setSelected(list[0].email);
-      else setDialogOpen(true);
+      else setDialog({ open: true, editing: null });
     });
   }, []);
+
+  const appDark = useEffectiveDark(settings?.appearance.theme ?? "system");
+  // 只包含影响正文渲染的设置，变化时重新加载阅读区
+  const readingVersion = settings ? JSON.stringify(settings.reading) : "";
+
+  // 外观
+  useEffect(() => {
+    if (!settings) return;
+    const root = document.documentElement;
+    root.dataset.theme = settings.appearance.theme;
+    root.dataset.density = settings.appearance.density;
+  }, [settings]);
 
   // 第一次选中某账号时加载
   useEffect(() => {
@@ -76,6 +113,19 @@ export default function App() {
   }, [selected, inboxes, load]);
 
   useEffect(() => setOpenUid(null), [selected]);
+
+  // 自动同步所有账号
+  const minutes = settings?.sync.autoSyncMinutes ?? 0;
+  useEffect(() => {
+    if (!minutes || !accounts?.length) return;
+    const timer = window.setInterval(() => {
+      for (const a of accounts) {
+        // 还没打开过的账号只同步，不需要读缓存
+        sync(a.email);
+      }
+    }, minutes * 60_000);
+    return () => window.clearInterval(timer);
+  }, [minutes, accounts, sync]);
 
   function updateSeen(email: string, uid: number, seen: boolean) {
     setInboxes((all) => {
@@ -102,28 +152,70 @@ export default function App() {
 
   function onSelectMail(mail: Envelope) {
     setOpenUid(mail.uid);
-    if (!mail.seen) setSeen(mail, true);
+    if (!mail.seen && settings?.reading.markReadOnOpen) setSeen(mail, true);
   }
 
-  function onAdded(account: Account) {
-    setAccounts((list) => [...(list ?? []).filter((a) => a.email !== account.email), account]);
-    setInboxes(({ [account.email]: _, ...rest }) => rest);
-    setSelected(account.email);
-    setDialogOpen(false);
+  async function saveReading(reading: Partial<SettingsView["reading"]>, notice: string) {
+    if (!settings) return;
+    const { hasProxyPassword: _, ...plain } = settings;
+    try {
+      setSettings(await api.saveSettings({ ...plain, reading: { ...plain.reading, ...reading } }));
+      showNotice(notice);
+    } catch (err) {
+      showNotice(`保存失败: ${err}`);
+    }
+  }
+
+  function trustSender(entry: string) {
+    const trusted = [...new Set([...(settings?.reading.trustedSenders ?? []), entry])];
+    return saveReading({ trustedSenders: trusted }, `已信任 ${entry}，可在「设置 → 阅读与隐私」中管理`);
+  }
+
+  function setEmailDarkMode(mode: EmailDarkMode) {
+    return saveReading(
+      { emailDarkMode: mode },
+      mode === "always" ? "邮件正文将始终使用深色" : "邮件正文将始终白底原样显示",
+    );
+  }
+
+  function onSaved(account: Account) {
+    const isNew = !accounts?.some((a) => a.email === account.email);
+    setAccounts((list) => {
+      const rest = list ?? [];
+      return rest.some((a) => a.email === account.email)
+        ? rest.map((a) => (a.email === account.email ? account : a))
+        : [...rest, account];
+    });
+    setDialog({ open: false, editing: null });
+    if (isNew) {
+      setInboxes(({ [account.email]: _, ...rest }) => rest);
+      setSelected(account.email);
+      setSettingsTab(null);
+    }
+    showNotice(isNew ? `已添加 ${account.email}` : `已保存 ${account.email}`);
   }
 
   async function onRemove(account: Account) {
     if (
       !confirm(
-        `移除账号 ${account.email}？\n\n会删除本地缓存的邮件和保存在系统凭据管理器中的授权码，邮箱服务器上的邮件不受影响。`,
+        `删除账号 ${account.email}？\n\n会删除本地缓存的邮件和保存在系统凭据管理器中的登录凭据，邮箱服务器上的邮件不受影响。`,
       )
     )
       return;
-    await api.removeAccount(account.email);
+    try {
+      await api.removeAccount(account.email);
+    } catch (err) {
+      return showNotice(`删除失败: ${err}`);
+    }
     const rest = (accounts ?? []).filter((a) => a.email !== account.email);
     setAccounts(rest);
     setInboxes(({ [account.email]: _, ...others }) => others);
-    setSelected(rest[0]?.email ?? null);
+    if (selected === account.email) setSelected(rest[0]?.email ?? null);
+  }
+
+  function onCacheCleared() {
+    setInboxes({});
+    setOpenUid(null);
   }
 
   const unread = inbox.mails?.filter((m) => !m.seen).length ?? 0;
@@ -136,30 +228,60 @@ export default function App() {
         <nav className="accounts">
           {accounts?.map((a) => {
             const count = inboxes[a.email]?.mails?.filter((m) => !m.seen).length ?? 0;
+            const failed = Boolean(inboxes[a.email]?.error);
             return (
               <button
                 key={a.email}
-                className={`account ${a.email === selected ? "active" : ""}`}
-                onClick={() => setSelected(a.email)}
-                title={a.email}
+                className={`account ${a.email === selected && !settingsTab ? "active" : ""}`}
+                onClick={() => {
+                  setSelected(a.email);
+                  setSettingsTab(null);
+                }}
+                title={`${a.email} · ${providerById(a.provider).name}`}
               >
                 <Avatar name={a.displayName || a.email} seed={a.email} size={28} />
                 <span className="account-text">
                   <span className="account-name">{a.displayName || a.email.split("@")[0]}</span>
                   <span className="account-email">{a.email}</span>
                 </span>
-                {count > 0 && <span className="badge">{count > 99 ? "99+" : count}</span>}
+                {failed ? (
+                  <span className="badge warn" title={inboxes[a.email]?.error ?? ""}>
+                    !
+                  </span>
+                ) : (
+                  count > 0 && <span className="badge">{count > 99 ? "99+" : count}</span>
+                )}
               </button>
             );
           })}
         </nav>
 
-        <button className="add-account" onClick={() => setDialogOpen(true)}>
+        <button className="add-account" onClick={() => setDialog({ open: true, editing: null })}>
           ＋ 添加账号
+        </button>
+        <button
+          className={`sidebar-settings ${settingsTab ? "active" : ""}`}
+          onClick={() => setSettingsTab(settingsTab ? null : "accounts")}
+        >
+          ⚙ 设置
         </button>
       </aside>
 
-      {current ? (
+      {settingsTab && settings && accounts ? (
+        <SettingsPage
+          settings={settings}
+          accounts={accounts}
+          initialTab={settingsTab}
+          onClose={() => setSettingsTab(null)}
+          onSettingsSaved={setSettings}
+          onAccountsChanged={setAccounts}
+          onAddAccount={() => setDialog({ open: true, editing: null })}
+          onEditAccount={(a) => setDialog({ open: true, editing: a })}
+          onRemoveAccount={onRemove}
+          onCacheCleared={onCacheCleared}
+          notify={showNotice}
+        />
+      ) : current ? (
         <>
           <section className="list-pane">
             <header className="toolbar">
@@ -176,14 +298,18 @@ export default function App() {
               <div className="toolbar-actions">
                 <button
                   className="ghost icon"
-                  onClick={() => load(current.email, { announce: true })}
+                  onClick={() => sync(current.email, { announce: true })}
                   disabled={inbox.syncing}
                   title="同步"
                 >
                   <span className={inbox.syncing ? "spin" : ""}>⟳</span>
                 </button>
-                <button className="ghost icon danger" onClick={() => onRemove(current)} title="移除账号">
-                  ✕
+                <button
+                  className="ghost icon"
+                  onClick={() => setDialog({ open: true, editing: current })}
+                  title="账号设置"
+                >
+                  ✎
                 </button>
               </div>
             </header>
@@ -215,6 +341,10 @@ export default function App() {
                 mail={openMail}
                 onToggleSeen={(m) => setSeen(m, !m.seen)}
                 onNotice={showNotice}
+                onTrustSender={trustSender}
+                appDark={appDark}
+                settingsVersion={readingVersion}
+                onDarkModeChange={setEmailDarkMode}
               />
             ) : (
               <div className="placeholder">选择一封邮件阅读</div>
@@ -227,7 +357,7 @@ export default function App() {
             <div className="placeholder welcome">
               <h2>欢迎使用 MailBox</h2>
               <p>添加一个邮箱账号开始使用</p>
-              <button className="primary" onClick={() => setDialogOpen(true)}>
+              <button className="primary" onClick={() => setDialog({ open: true, editing: null })}>
                 添加账号
               </button>
             </div>
@@ -237,7 +367,17 @@ export default function App() {
 
       {notice && <div className="toast">{notice}</div>}
 
-      <AccountDialog open={dialogOpen} onClose={() => setDialogOpen(false)} onAdded={onAdded} />
+      <AccountDialog
+        open={dialog.open}
+        editing={dialog.editing}
+        proxyConfigured={proxyConfigured}
+        onClose={() => setDialog({ open: false, editing: null })}
+        onSaved={onSaved}
+        onOpenSettings={() => {
+          setDialog({ open: false, editing: null });
+          setSettingsTab("proxy");
+        }}
+      />
     </div>
   );
 }

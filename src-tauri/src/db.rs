@@ -205,6 +205,36 @@ impl Db {
         })
     }
 
+    /// (邮件头数, 已缓存正文数, 正文总字节数)
+    pub fn stats(&self, account: &str) -> Result<(u64, u64, u64), String> {
+        self.with(|c| {
+            let headers: i64 =
+                c.query_row("SELECT count(*) FROM messages WHERE account = ?1", params![account], |r| r.get(0))?;
+            let (bodies, bytes): (i64, i64) = c.query_row(
+                "SELECT count(*), coalesce(sum(length(raw)), 0) FROM bodies WHERE account = ?1",
+                params![account],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            Ok((headers as u64, bodies as u64, bytes as u64))
+        })
+    }
+
+    /// 只删正文，邮件列表保留；再次打开时重新下载
+    pub fn clear_bodies(&self) -> Result<(), String> {
+        self.with(|c| c.execute("DELETE FROM bodies", []).map(|_| ()))?;
+        self.vacuum()
+    }
+
+    /// 清空全部缓存，下次同步从头拉取
+    pub fn clear_all(&self) -> Result<(), String> {
+        self.with(|c| c.execute_batch("DELETE FROM bodies; DELETE FROM messages; DELETE FROM folder_state;"))?;
+        self.vacuum()
+    }
+
+    fn vacuum(&self) -> Result<(), String> {
+        self.with(|c| c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;"))
+    }
+
     pub fn delete_account(&self, account: &str) -> Result<(), String> {
         self.with(|c| {
             let tx = c.transaction()?;
@@ -279,6 +309,23 @@ mod tests {
         assert_eq!(db.uid_validity(A, F).unwrap(), None);
         assert_eq!(db.cached_flags("b@qq.com", F).unwrap(), [(1, false)]);
         assert!(db.get_body("b@qq.com", F, 1).unwrap().is_some());
+    }
+
+    #[test]
+    fn stats_and_clearing() {
+        let db = Db::open_in_memory().unwrap();
+        db.reset_folder(A, F, 1).unwrap();
+        db.apply_sync(A, F, &[], &[], &[env(1, false), env(2, false)]).unwrap();
+        db.put_body(A, F, 1, b"12345").unwrap();
+        assert_eq!(db.stats(A).unwrap(), (2, 1, 5));
+        assert_eq!(db.stats("other@qq.com").unwrap(), (0, 0, 0));
+
+        db.clear_bodies().unwrap();
+        assert_eq!(db.stats(A).unwrap(), (2, 0, 0));
+
+        db.clear_all().unwrap();
+        assert_eq!(db.stats(A).unwrap(), (0, 0, 0));
+        assert_eq!(db.uid_validity(A, F).unwrap(), None);
     }
 
     #[test]

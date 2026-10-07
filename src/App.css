@@ -12,13 +12,33 @@
 
   font-family: system-ui, "Segoe UI", "Microsoft YaHei UI", sans-serif;
   font-size: 14px;
+  --success: #1a7f37;
+  --row-y: 10px;
+
   color: var(--text);
   background: var(--bg);
-  color-scheme: light dark;
+  color-scheme: light;
+}
+
+/* 深色：手动选择，或跟随系统 */
+:root[data-theme="dark"] {
+  --bg: #111317;
+  --panel: #181b20;
+  --sidebar: #14161a;
+  --border: #2a2e35;
+  --text: #e6e8eb;
+  --muted: #8b939e;
+  --accent: #5b8ff9;
+  --accent-soft: #1e2a44;
+  --danger: #f47067;
+  --hover: rgba(255, 255, 255, 0.05);
+  --success: #3fb950;
+  color-scheme: dark;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]):not([data-theme="dark"]),
+  :root[data-theme="system"] {
     --bg: #111317;
     --panel: #181b20;
     --sidebar: #14161a;
@@ -29,7 +49,13 @@
     --accent-soft: #1e2a44;
     --danger: #f47067;
     --hover: rgba(255, 255, 255, 0.05);
+    --success: #3fb950;
+    color-scheme: dark;
   }
+}
+
+:root[data-density="compact"] {
+  --row-y: 5px;
 }
 
 * {
@@ -85,7 +111,15 @@ input {
 .layout {
   display: grid;
   grid-template-columns: 220px minmax(300px, 380px) 1fr;
+  /* 行高固定为窗口高度；否则网格行会被 200 封邮件撑高，
+     侧栏底部的「添加账号 / 设置」被挤到窗口外面 */
+  grid-template-rows: minmax(0, 1fr);
   height: 100vh;
+  overflow: hidden;
+}
+
+.layout > * {
+  min-height: 0;
 }
 
 .welcome-pane {
@@ -269,8 +303,14 @@ input {
   flex: 1;
   width: 100%;
   border: none;
-  /* 邮件按发件人的设计在白底上显示，深色模式下也一样 */
-  background: #fff;
+  /* 底色由渲染模式决定（内联 style），这里只是兜底 */
+  background: var(--panel);
+}
+
+.reader-title-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
 }
 
 .sidebar {
@@ -396,7 +436,7 @@ input {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
+  padding: var(--row-y) 16px;
   border-bottom: 1px solid var(--border);
   border-left: 3px solid transparent;
   cursor: default;
@@ -527,51 +567,45 @@ input {
   color: var(--text);
 }
 
-/* ---------- 添加账号对话框 ---------- */
+/* ---------- 表单通用 ---------- */
 
-.dialog {
-  width: 420px;
-  padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--panel);
-  color: var(--text);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
-}
-
-.dialog::backdrop {
-  background: rgba(0, 0, 0, 0.35);
-}
-
-.dialog form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.dialog h2 {
-  margin: 0 0 4px;
-  font-size: 18px;
-}
-
-.dialog label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.dialog input {
-  padding: 8px 10px;
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  padding: 7px 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
+  color: var(--text);
+  font: inherit;
   outline: none;
 }
 
-.dialog input:focus {
+input:focus,
+select:focus,
+textarea:focus {
   border-color: var(--accent);
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+}
+
+input:disabled {
+  opacity: 0.6;
+}
+
+.checkbox,
+.radio {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+  color: var(--text) !important;
+  font-size: 13px;
 }
 
 .optional {
@@ -585,26 +619,6 @@ input {
   color: var(--muted);
 }
 
-.advanced summary {
-  font-size: 13px;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.server-row {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.server-row .grow {
-  flex: 1;
-}
-
-.server-row .port {
-  width: 80px;
-}
-
 .error {
   margin: 0;
   color: var(--danger);
@@ -612,9 +626,353 @@ input {
   white-space: pre-wrap;
 }
 
-.actions {
+.success {
+  margin: 0;
+  color: var(--success);
+  font-size: 13px;
+}
+
+.server-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.server-row .grow,
+.server-row input.grow {
+  flex: 1;
+}
+
+.server-row .port {
+  width: 90px;
+}
+
+.actions,
+.button-row {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
+}
+
+.button-row {
+  justify-content: flex-start;
+}
+
+.tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+/* ---------- 对话框 ---------- */
+
+.dialog {
+  width: 460px;
+  max-height: 90vh;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+}
+
+.dialog::backdrop {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+}
+
+.dialog h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.back {
+  padding: 0 6px;
+  border: none;
+  background: none;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.provider-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.provider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+
+.provider:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.provider-icon {
+  font-size: 20px;
+}
+
+.advanced summary {
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.oauth-button {
+  padding: 10px;
+}
+
+.oauth-waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  font-size: 13px;
+}
+
+.oauth-waiting .link {
+  margin-left: auto;
+}
+
+/* ---------- 侧边栏底部 ---------- */
+
+.sidebar-settings {
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+}
+
+.sidebar-settings:hover,
+.sidebar-settings.active {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.badge.warn {
+  background: var(--danger);
+}
+
+.banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ---------- 设置页 ---------- */
+
+.settings {
+  grid-column: 2 / -1;
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  min-height: 0;
+  background: var(--panel);
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 8px;
+  border-right: 1px solid var(--border);
+}
+
+.settings-nav h1 {
+  margin: 8px 8px 12px;
+  font-size: 18px;
+}
+
+.settings-back {
+  align-self: flex-start;
+  border: none;
+}
+
+.settings-tab {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+}
+
+.settings-tab:hover {
+  background: var(--hover);
+}
+
+.settings-tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.settings-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.settings-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 32px 32px;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 640px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-section:last-child {
+  border-bottom: none;
+}
+
+.settings-section h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.settings-section > p.muted {
+  margin: -4px 0 4px;
+}
+
+.settings-section label:not(.checkbox):not(.radio) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.settings-section .field {
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 420px;
+  color: var(--text) !important;
+}
+
+.settings-section .link {
+  align-self: flex-start;
+}
+
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 32px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-footer .error {
+  margin-right: auto;
+}
+
+.account-rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.account-rows li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.account-rows li:last-child {
+  border-bottom: none;
+}
+
+.account-row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.account-row-text > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.settings-section > .primary {
+  align-self: flex-start;
+}
+
+.cache-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.cache-table th,
+.cache-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.cache-table th {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.radio-desc {
+  margin: -6px 0 4px 24px !important;
+  font-size: 12px;
 }
