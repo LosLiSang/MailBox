@@ -27,6 +27,8 @@ native-tls = "0.2.18"
 mail-parser = { version = "0.11.9", features = ["full_encoding"] }
 thiserror = "2.0.21"
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+percent-encoding = "2"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

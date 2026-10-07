@@ -14,7 +14,9 @@
       {
         "title": "MailBox",
         "width": 1200,
-        "height": 760
+        "height": 760,
+        "label": "main",
+        "create": false
       }
     ],
     "security": {

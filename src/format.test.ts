@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { detectProvider, formatMailDate, hue, initials } from "./format";
+import {
+  detectProvider,
+  formatFullDate,
+  formatMailDate,
+  formatSize,
+  hue,
+  initials,
+  syncSummary,
+} from "./format";
 
 describe("detectProvider", () => {
   it.each([
@@ -34,6 +42,40 @@ describe("formatMailDate", () => {
 
   it("往年显示完整日期", () => {
     expect(formatMailDate(new Date(2024, 0, 2).toISOString(), now)).toMatch(/2024/);
+  });
+});
+
+describe("formatFullDate", () => {
+  it.each([
+    [null, ""],
+    ["bad", ""],
+    [new Date(2025, 3, 1, 9, 5).toISOString(), "2025年4月1日 09:05"],
+  ])("%s -> %s", (iso, want) => {
+    expect(formatFullDate(iso)).toBe(want);
+  });
+});
+
+describe("formatSize", () => {
+  it.each([
+    [0, "0 B"],
+    [1023, "1023 B"],
+    [1024, "1.0 KB"],
+    [1536, "1.5 KB"],
+    [20 * 1024, "20 KB"],
+    [5 * 1024 * 1024, "5.0 MB"],
+    [3 * 1024 ** 4, "3072 GB"],
+  ])("%d -> %s", (bytes, want) => {
+    expect(formatSize(bytes)).toBe(want);
+  });
+});
+
+describe("syncSummary", () => {
+  it.each([
+    [{ added: 0, deleted: 0, updated: 0 }, "已是最新"],
+    [{ added: 3, deleted: 0, updated: 0 }, "3 封新邮件"],
+    [{ added: 1, deleted: 2, updated: 4 }, "1 封新邮件，2 封已删除，4 封状态更新"],
+  ])("%o -> %s", (stats, want) => {
+    expect(syncSummary(stats)).toBe(want);
   });
 });
 

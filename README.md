@@ -4,7 +4,9 @@
 
 ## 当前功能
 
-- 通过 IMAP 拉取收件箱最近 50 封邮件头（支持 GBK / UTF-8 等编码）
+- 本地 SQLite 缓存（`%APPDATA%\com.mailbox.app\mail.db`），打开即显示，后台按 UID 增量同步收件箱（首次最近 200 封）
+- 阅读正文：首次打开从服务器下载并缓存，sandbox iframe + CSP 渲染，默认拦截远程图片，内联图片走 `mailbox://` 协议
+- 附件打开 / 保存到 `下载\MailBox`，已读状态双向同步
 - 多账号：配置存 `%APPDATA%\com.mailbox.app\accounts.json`，授权码存系统凭据管理器（keyring）
 - QQ / Foxmail / 163 / 126 / yeah.net 自动识别服务器
 
