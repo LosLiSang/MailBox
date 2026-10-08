@@ -555,7 +555,7 @@ function ReadingTab({ draft, setDraft }: DraftProps) {
             checked={reading.remoteImages === "block"}
             onChange={() => setDraft({ ...draft, reading: { ...reading, remoteImages: "block" } })}
           />
-          默认拦截，点击后显示（推荐）
+          默认拦截，点击后显示
         </label>
         <label className="radio">
           <input
@@ -563,7 +563,7 @@ function ReadingTab({ draft, setDraft }: DraftProps) {
             checked={reading.remoteImages === "allow"}
             onChange={() => setDraft({ ...draft, reading: { ...reading, remoteImages: "allow" } })}
           />
-          总是显示
+          总是显示（默认）
         </label>
         <label className="checkbox">
           <input

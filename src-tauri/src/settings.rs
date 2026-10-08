@@ -29,8 +29,8 @@ impl Default for SyncSettings {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RemoteImages {
-    #[default]
     Block,
+    #[default]
     Allow,
 }
 
@@ -51,7 +51,7 @@ pub struct ReadingSettings {
 impl Default for ReadingSettings {
     fn default() -> Self {
         Self {
-            remote_images: RemoteImages::Block,
+            remote_images: RemoteImages::Allow,
             trusted_senders: vec![],
             mark_read_on_open: true,
             email_dark_mode: DarkPreference::Auto,
@@ -224,7 +224,7 @@ mod tests {
         let partial: Settings = serde_json::from_str(r#"{"sync":{"window":500}}"#).unwrap();
         assert_eq!(partial.sync.window, 500);
         assert_eq!(partial.sync.auto_sync_minutes, 5);
-        assert_eq!(partial.reading.remote_images, RemoteImages::Block);
+        assert_eq!(partial.reading.remote_images, RemoteImages::Allow);
         assert_eq!(partial.reading.email_dark_mode, DarkPreference::Auto);
         assert!(partial.reading.images_via_proxy);
         assert_eq!(partial.appearance.fonts.ui_scale, 100);
