@@ -96,13 +96,14 @@ pub struct AppearanceSettings {
     pub fonts: FontSettings,
 }
 
-/// 自己在 Google Cloud / Azure 注册的 OAuth 应用
+/// Google OAuth 应用及 Microsoft 公共客户端的可选覆盖
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct OAuthApps {
     pub google_client_id: String,
     /// Google 桌面应用的 client secret 按官方说明不视为机密，但仍必须提交
     pub google_client_secret: String,
+    /// 空值使用 MailBox 内置注册；非空值覆盖默认应用
     pub microsoft_client_id: String,
 }
 

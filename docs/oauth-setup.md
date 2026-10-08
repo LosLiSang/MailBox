@@ -1,7 +1,7 @@
 # 配置 Gmail / Outlook 浏览器登录（OAuth）
 
 Gmail 和 Outlook 的浏览器登录需要一个「OAuth 应用」来标识 MailBox。
-这个应用由你自己在 Google / 微软后台免费创建，拿到 ID 后填进 MailBox 的「设置 → 高级」。
+Outlook 已内置 MailBox 项目的公共客户端注册，用户无需申请 Azure；Gmail 仍需配置自己的 Google 应用。
 
 > 只想先用起来 Gmail，也可以跳过本文：开启两步验证后生成「应用专用密码」，
 > 添加账号时选 Gmail → 「改用应用专用密码」。Outlook / Hotmail 个人邮箱已经不支持密码登录，只能走 OAuth。
@@ -42,29 +42,38 @@ Google Cloud 控制台现在把 OAuth 配置放在 **Google Auth Platform** 下�
 
 ## Microsoft（Outlook / Hotmail / Live）
 
-应用注册必须放在一个 Microsoft Entra「租户（目录）」里。公司/学校账号自带租户；
-**个人账号（outlook.com / hotmail.com）默认没有**，直接打开应用注册会提示没有租户或无权访问，需要先做第 0 步。
+### 普通用户：直接登录
 
-0. （仅个人账号）创建一个免费租户：
-   - 用你的微软账号登录 [Azure 门户](https://portal.azure.com)；如果提示注册 Azure 免费账户，按提示完成（需要手机验证，可能要求绑卡验证身份，不会扣费）
-   - 搜索 **Microsoft Entra ID** → 「管理租户」→「＋ 创建」→ 选 **Microsoft Entra ID（员工）**
-   - 组织名称随意，初始域名如 `yourname-dev`（得到 `yourname-dev.onmicrosoft.com`）
-   - 创建后点右上角齿轮「目录 + 订阅」切换到这个新租户
-1. **Microsoft Entra ID → 应用注册 → ＋ 新注册**：
+1. 网页版 Outlook → 设置 → 邮件 → 转发和 IMAP，确认允许设备和应用使用 IMAP。
+2. MailBox → 添加账号 → Outlook，点击浏览器登录按钮，在微软页面完成登录并同意授权。
+3. 公司/学校邮箱可能需要管理员批准，客户端不能绕过组织策略。
+
+默认 Client ID 为 `88600fe5-f9d3-4b15-974d-1c299963a96e`。这是可公开的应用标识，不是密钥。
+「设置 → 高级 → Microsoft OAuth 应用」留空即使用默认注册，包括旧版本已经保存的空值。
+若之前设置了自定义 ID，清空并保存即可恢复默认；更换应用后，已有账号可能需要重新登录。
+
+### 项目维护者 / 自定义应用
+
+应用注册必须放在有注册权限的 Microsoft Entra 目录中；个人 Microsoft 账号不保证有可用目录。
+Azure 注册可能要求银行卡验证；没有目录时，可由可信协作者在长期维护的目录中为项目注册。
+应用注册本身不要求部署云资源，不应承诺任何账号均可免费创建租户。
+
+1. Microsoft Entra ID → 应用注册 → 新注册：
    - 名称：`MailBox`
-   - 受支持的帐户类型：**任何组织目录中的帐户和个人 Microsoft 帐户**
-     （只用个人邮箱也可以选「仅个人 Microsoft 帐户」，但**不要选单租户**，否则个人邮箱登录会被拒绝）
-   - 重定向 URI：平台选 **公共客户端/本机（移动和桌面）**，填 `http://localhost`
-2. 注册后在「概述」页复制 **应用程序(客户端) ID**（形如 `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`）。
-3. **身份验证 → 高级设置 → 允许公共客户端流**，设为 **是**，保存。
-4. （可选）**API 权限 → 添加权限 → Microsoft Graph → 委托的权限**，勾选
-   `IMAP.AccessAsUser.All`、`offline_access`、`openid`、`email`、`profile`。
-   MailBox 登录时会动态申请这些权限，不加也能用；加上后授权页列出的权限更清楚。
-5. 回到 MailBox：「设置 → 高级 → Microsoft OAuth 应用」填入客户端 ID，保存。
+   - 支持的账户类型：任何组织目录中的账户和个人 Microsoft 账户
+   - 重定向平台：公共客户端/本机（移动和桌面应用程序）
+   - 回调 URI：`http://localhost/`，也可以注册 `http://localhost:34567/`
+2. 应用 → 身份验证，确认回调属于「移动和桌面应用程序」，不要配置成 Web / SPA。
+   MailBox 使用授权码 + PKCE 和随机空闲端口；微软匹配该 localhost 原生回调时忽略端口，因此不必固定监听 34567。
+3. API 权限 → 添加权限 → Office 365 Exchange Online → 委托的权限：
+   添加 `IMAP.AccessAsUser.All`。不要用 Microsoft Graph 的 `Mail.Read` 替代。
+   登录还请求 `offline_access openid email profile`，用于续期和账号识别。
+4. 从概述复制「应用程序（客户端）ID」，不是对象 ID 或租户 ID。
+   自定义部署可填到 MailBox 高级设置中，覆盖默认应用。
 
-**不需要**客户端密码（client secret），也不要创建：桌面应用无法安全保存密码，MailBox 使用 PKCE。
-
-个人 Outlook 邮箱还需要确认 IMAP 已开启：网页版 Outlook → 设置 → 邮件 → 转发和 IMAP → **允许设备和应用使用 IMAP**。
+**不需要** Client Secret，也不要创建或内置：MailBox 是公共桌面客户端，使用 PKCE。
+本地代码配置不代表微软后台已经正确设置；公开发布前必须验证真实账号登录、续期和 IMAP 访问。
+维护者应配置准确的应用名称、主页、隐私政策和联系方式，并明确目录与应用的长期管理归属。
 
 ## 工作原理
 
