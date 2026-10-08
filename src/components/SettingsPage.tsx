@@ -8,14 +8,14 @@ const PALETTE = ["#d29922", "#539bf5", "#6e7781", "#f47067", "#3fb950", "#a371f7
 
 type Tab = "accounts" | "categories" | "sync" | "reading" | "proxy" | "appearance" | "advanced";
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "accounts", label: "账号" },
-  { id: "categories", label: "分类与规则" },
-  { id: "sync", label: "同步与缓存" },
-  { id: "reading", label: "阅读与隐私" },
-  { id: "proxy", label: "代理" },
-  { id: "appearance", label: "外观" },
-  { id: "advanced", label: "高级" },
+const TABS: { id: Tab; label: string; desc: string }[] = [
+  { id: "accounts", label: "账号", desc: "管理邮箱账号与连接方式。" },
+  { id: "categories", label: "分类与规则", desc: "让每个邮箱都有自己的整理方式。" },
+  { id: "sync", label: "同步与缓存", desc: "调整同步频率与本地存储。" },
+  { id: "reading", label: "阅读与隐私", desc: "选择适合你的阅读方式与隐私偏好。" },
+  { id: "proxy", label: "代理", desc: "配置网络连接并测试可用性。" },
+  { id: "appearance", label: "外观", desc: "调整主题、密度与字体，让阅读更舒适。" },
+  { id: "advanced", label: "高级", desc: "管理自定义 OAuth 应用。" },
 ];
 
 type Props = {
@@ -81,13 +81,13 @@ export function SettingsPage(props: Props) {
 
   return (
     <div className="settings">
-      <nav className="settings-nav">
+      <nav className="settings-nav" aria-label="设置分类">
         <button className="ghost settings-back" onClick={close}>
           ‹ 返回
         </button>
         <h1>设置</h1>
         {TABS.map((t) => (
-          <button key={t.id} className={`settings-tab ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
+          <button key={t.id} className={`settings-tab ${tab === t.id ? "active" : ""}`} aria-current={tab === t.id ? "page" : undefined} onClick={() => setTab(t.id)}>
             {t.label}
           </button>
         ))}
@@ -95,6 +95,10 @@ export function SettingsPage(props: Props) {
 
       <div className="settings-main">
         <div className="settings-content">
+          <header className="settings-heading">
+            <h1>{TABS.find((t) => t.id === tab)?.label}</h1>
+            <p>{TABS.find((t) => t.id === tab)?.desc}</p>
+          </header>
           {tab === "accounts" && <AccountsTab {...props} />}
           {tab === "categories" && <CategoriesTab {...props} />}
           {tab === "sync" && <SyncTab draft={draft} setDraft={setDraft} {...props} />}
@@ -114,7 +118,9 @@ export function SettingsPage(props: Props) {
 
         {tab !== "accounts" && (
           <footer className="settings-footer">
-            {error && <span className="error">{error}</span>}
+            <span className={`settings-save-status ${error ? "error" : "muted"}`} role="status">
+              {error ?? (saving ? "正在保存…" : dirty ? "有未保存的修改" : "所有设置已保存")}
+            </span>
             <button className="ghost" onClick={discard} disabled={!dirty || saving}>
               撤销修改
             </button>
@@ -751,23 +757,36 @@ function AppearanceTab({ draft, setDraft }: DraftProps) {
     { name: "", localName: "系统默认", monospaced: false } as FontFamily,
     ...fonts,
   ];
-  const display = (f: FontFamily) => (f.localName === f.name ? f.name : `${f.localName} (${f.name})`);
-  const preview = (family: string) => (family ? `"${family}"` : "");
+  const display = (f: FontFamily) => (!f.name || f.localName === f.name ? f.localName : `${f.localName} (${f.name})`);
+  const preview = (family: string) => (family ? `"${family}", var(--font-sans-default)` : "var(--font-sans-default)");
+  const themes = [
+    { value: "system", label: "跟随系统", icon: "◐" },
+    { value: "light", label: "浅色", icon: "☀" },
+    { value: "dark", label: "深色", icon: "☾" },
+  ] as const;
 
   return (
-    <>
-      <Section title="主题与密度">
-        <label className="field">
-          <span>主题</span>
-          <select
-            value={a.theme}
-            onChange={(e) => set({ theme: e.currentTarget.value as Settings["appearance"]["theme"] })}
-          >
-            <option value="system">跟随系统</option>
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
-          </select>
-        </label>
+    <div className="appearance-settings">
+      <Section title="主题与布局" desc="选择界面配色与邮件列表的显示密度。">
+        <div className="theme-choices" role="group" aria-label="主题">
+          {themes.map((theme) => (
+            <button
+              key={theme.value}
+              type="button"
+              className={`theme-choice ${a.theme === theme.value ? "selected" : ""}`}
+              aria-pressed={a.theme === theme.value}
+              onClick={() => set({ theme: theme.value })}
+            >
+              <span className={`theme-swatch ${theme.value}`} aria-hidden="true">
+                <span /><span /><span />
+              </span>
+              <span className="theme-choice-label">
+                <span aria-hidden="true">{theme.icon}</span>
+                {theme.label}
+              </span>
+            </button>
+          ))}
+        </div>
         <label className="field">
           <span>列表密度</span>
           <select
@@ -780,64 +799,64 @@ function AppearanceTab({ draft, setDraft }: DraftProps) {
         </label>
       </Section>
 
-      <Section title="界面字体" desc="侧栏、列表和设置使用的字体。">
-        <label className="field">
-          <span>字体</span>
-          <select value={a.uiFamily} onChange={(e) => set({ uiFamily: e.currentTarget.value })}>
-            {fontOptions.map((f) => (
-              <option key={f.name} value={f.name}>
-                {display(f)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>字号</span>
-          <select value={a.uiScale} onChange={(e) => set({ uiScale: Number(e.currentTarget.value) })}>
-            {[80, 90, 100, 110, 120, 135, 150].map((n) => (
-              <option key={n} value={n}>
-                {n}%
-              </option>
-            ))}
-          </select>
-        </label>
-        <p
-          className="font-preview"
-          style={{ fontFamily: preview(a.uiFamily), fontSize: `${(14 * a.uiScale) / 100}px` }}
-        >
-          邮件摘要预览 Aa Bb 123 — The quick brown fox jumps over the lazy dog
-        </p>
+      <Section title="界面字体" desc="用于侧栏、邮件列表和设置界面。">
+        <div className="font-controls">
+          <label>
+            <span>字体家族</span>
+            <select value={a.uiFamily} onChange={(e) => set({ uiFamily: e.currentTarget.value })}>
+              {fontOptions.map((f) => (
+                <option key={f.name} value={f.name}>{display(f)}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>界面缩放</span>
+            <select value={a.uiScale} onChange={(e) => set({ uiScale: Number(e.currentTarget.value) })}>
+              {[80, 90, 100, 110, 120, 135, 150].map((n) => (
+                <option key={n} value={n}>{n}%{n === 100 ? "（默认）" : ""}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="font-preview">
+          <span className="preview-caption">界面预览</span>
+          <p style={{ fontFamily: preview(a.uiFamily), fontSize: `${(14 * a.uiScale) / 100}px` }}>
+            新的一天，从一封邮件开始。
+          </p>
+          <p className="preview-secondary" style={{ fontFamily: preview(a.uiFamily), fontSize: `${(12 * a.uiScale) / 100}px` }}>
+            MailBox · The quick brown fox · 0123456789
+          </p>
+        </div>
       </Section>
 
-      <Section title="邮件正文字体" desc="只影响没有自带样式的邮件（普通来信、纯文本）；营销邮件用自己的字体。">
-        <label className="field">
-          <span>字体</span>
-          <select value={a.mailFamily} onChange={(e) => set({ mailFamily: e.currentTarget.value })}>
-            {fontOptions.map((f) => (
-              <option key={f.name} value={f.name}>
-                {display(f)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>字号</span>
-          <select value={a.mailFontSize || 14} onChange={(e) => set({ mailFontSize: Number(e.currentTarget.value) })}>
-            {[12, 13, 14, 15, 16, 18, 20, 24].map((n) => (
-              <option key={n} value={n}>
-                {n} px
-              </option>
-            ))}
-          </select>
-        </label>
-        <p
-          className="font-preview mail"
-          style={{ fontFamily: preview(a.mailFamily), fontSize: `${a.mailFontSize || 14}px` }}
-        >
-          你好，这是邮件正文的预览效果。上周会议的纪要已经整理好，请查收附件。
-        </p>
+      <Section title="邮件正文字体" desc="选择字体后会覆盖邮件的常规字体声明，保留原有标题字号、颜色和排版；正文字号主要用于没有指定字号的内容。">
+        <div className="font-controls">
+          <label>
+            <span>字体家族</span>
+            <select value={a.mailFamily} onChange={(e) => set({ mailFamily: e.currentTarget.value })}>
+              {fontOptions.map((f) => (
+                <option key={f.name} value={f.name}>{display(f)}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>正文字号</span>
+            <select value={a.mailFontSize} onChange={(e) => set({ mailFontSize: Number(e.currentTarget.value) })}>
+              <option value={0}>默认（14 px）</option>
+              {[12, 13, 14, 15, 16, 18, 20, 24].map((n) => (
+                <option key={n} value={n}>{n} px</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="font-preview mail">
+          <span className="preview-caption">正文预览</span>
+          <p style={{ fontFamily: preview(a.mailFamily), fontSize: `${a.mailFontSize || 14}px` }}>
+            你好，这是邮件正文的预览效果。上周会议的纪要已经整理好，请查收附件。
+          </p>
+        </div>
       </Section>
-    </>
+    </div>
   );
 }
 

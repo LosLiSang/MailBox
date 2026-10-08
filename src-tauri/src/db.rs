@@ -254,6 +254,50 @@ impl Db {
         })
     }
 
+    /// 不受列表分页限制，只选择当前视图中已缓存的未读 UID。
+    pub fn unread_uids(&self, account: &str, folder: &str, view: View) -> Result<Vec<u32>, String> {
+        self.with(|c| {
+            let (all, category) = match view {
+                View::All => (true, None),
+                View::Inbox => (false, None),
+                View::Category(id) => (false, Some(id)),
+            };
+            let mut stmt = c.prepare(
+                "SELECT uid FROM messages WHERE account = ?1 AND folder = ?2 AND seen = 0
+                 AND (?3 OR category_id IS ?4) ORDER BY uid DESC",
+            )?;
+            let rows = stmt.query_map(params![account, folder, all, category], |r| r.get(0))?;
+            rows.collect()
+        })
+    }
+
+    pub fn set_seen_many(&self, account: &str, folder: &str, uids: &[u32], seen: bool) -> Result<(), String> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            for uid in uids {
+                tx.execute(
+                    "UPDATE messages SET seen = ?4 WHERE account = ?1 AND folder = ?2 AND uid = ?3",
+                    params![account, folder, uid, seen],
+                )?;
+            }
+            tx.commit()
+        })
+    }
+
+    /// 最新的、尚未缓存原始正文的未读邮件（跨本地分类）。
+    pub fn prefetch_candidates(&self, account: &str, folder: &str, limit: u32) -> Result<Vec<u32>, String> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT m.uid FROM messages m WHERE m.account = ?1 AND m.folder = ?2 AND m.seen = 0
+                 AND NOT EXISTS (SELECT 1 FROM bodies b WHERE b.account = m.account
+                                 AND b.folder = m.folder AND b.uid = m.uid)
+                 ORDER BY m.uid DESC LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![account, folder, limit], |r| r.get(0))?;
+            rows.collect()
+        })
+    }
+
     pub fn get_body(&self, account: &str, folder: &str, uid: u32) -> Result<Option<Vec<u8>>, String> {
         self.with(|c| {
             c.query_row(
@@ -648,6 +692,16 @@ mod tests {
         assert_eq!(in_junk.iter().map(|e| e.uid).collect::<Vec<_>>(), [2]);
         assert_eq!(in_junk[0].category_id, Some(junk.id));
 
+        // 全部已读的范围独立于列表分页，分类与账号互不影响。
+        db.apply_sync("other", F, &[], &[], &[env(1, false)]).unwrap();
+        assert_eq!(db.unread_uids(A, F, View::Inbox).unwrap(), [3, 1]);
+        assert_eq!(db.unread_uids(A, F, View::Category(junk.id)).unwrap(), [2]);
+        db.set_seen_many(A, F, &[3, 1], true).unwrap();
+        assert!(db.unread_uids(A, F, View::Inbox).unwrap().is_empty());
+        assert_eq!(db.unread_uids(A, F, View::All).unwrap(), [2]);
+        assert_eq!(db.unread_uids("other", F, View::All).unwrap(), [1]);
+        db.set_seen_many(A, F, &[1, 3], false).unwrap();
+
         // 规则：apply_existing 会把发件人 x@y.z 的全部邮件都归到「重要」
         // （包括之前手动移进「垃圾邮件」的 uid 2 —— 规则明确表达了意图）
         let important = cats.iter().find(|c| c.name == "重要").unwrap();
@@ -711,10 +765,17 @@ mod tests {
         db.apply_sync(A, F, &[], &[], &[env(1, false), env(2, false)]).unwrap();
         db.put_body(A, F, 1, b"12345").unwrap();
         assert_eq!(db.stats(A).unwrap(), (2, 1, 5));
+        assert_eq!(db.prefetch_candidates(A, F, 10).unwrap(), [2]);
+        assert!(db.prefetch_candidates(A, F, 0).unwrap().is_empty());
+        db.set_seen(A, F, 2, true).unwrap();
+        assert!(db.prefetch_candidates(A, F, 10).unwrap().is_empty());
+        db.set_seen(A, F, 2, false).unwrap();
         assert_eq!(db.stats("other@qq.com").unwrap(), (0, 0, 0));
 
         db.clear_bodies().unwrap();
         assert_eq!(db.stats(A).unwrap(), (2, 0, 0));
+        assert_eq!(db.prefetch_candidates(A, F, 1).unwrap(), [2]);
+        assert_eq!(db.prefetch_candidates(A, F, 10).unwrap(), [2, 1]);
 
         db.clear_all().unwrap();
         assert_eq!(db.stats(A).unwrap(), (0, 0, 0));

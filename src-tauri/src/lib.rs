@@ -379,6 +379,61 @@ async fn sync_inbox(app: AppHandle, email: String) -> Result<SyncStats, String> 
     .await
 }
 
+/// 列表刷新后由前端后台调用，不阻塞同步结果和阅读。
+#[tauri::command]
+async fn prefetch_unread(app: AppHandle, email: String) -> Result<usize, String> {
+    let state = app_state(&app);
+    blocking(move || {
+        let uids = state.db.prefetch_candidates(&email, INBOX, 10)?;
+        if uids.is_empty() { return Ok(0); }
+        state.with_session(&email, |creds| {
+            let mut s = imap_client::connect(creds).map_err(|e| e.to_string())?;
+            let result = (|| {
+                s.select(INBOX).map_err(|e| e.to_string())?;
+                let mut cached = 0;
+                for uid in uids {
+                    // 打开邮件可能已经按需缓存了正文。
+                    if state.db.get_body(&email, INBOX, uid)?.is_some() { continue; }
+                    if let Some(raw) = imap_client::fetch_raw_bounded(&mut s, uid, 5 * 1024 * 1024)
+                        .map_err(|e| e.to_string())? {
+                        state.db.put_body(&email, INBOX, uid, &raw)?;
+                        cached += 1;
+                    }
+                }
+                Ok(cached)
+            })();
+            s.logout().ok();
+            result
+        })
+    }).await
+}
+
+/// 先同步服务器，再提交本地；失败时不把本地邮件错误显示为已读。
+#[tauri::command]
+async fn mark_all_read(app: AppHandle, email: String, view: Option<i64>) -> Result<Vec<u32>, String> {
+    let state = app_state(&app);
+    blocking(move || {
+        let view = match view {
+            None => View::Inbox,
+            Some(id) if id < 0 => View::All,
+            Some(id) => View::Category(id),
+        };
+        let uids = state.db.unread_uids(&email, INBOX, view)?;
+        if uids.is_empty() { return Ok(uids); }
+        state.with_session(&email, |creds| {
+            let mut s = imap_client::connect(creds).map_err(|e| e.to_string())?;
+            let result = (|| {
+                s.select(INBOX).map_err(|e| e.to_string())?;
+                imap_client::store_seen_many(&mut s, &uids, true).map_err(|e| e.to_string())
+            })();
+            s.logout().ok();
+            result
+        })?;
+        state.db.set_seen_many(&email, INBOX, &uids, true)?;
+        Ok(uids)
+    }).await
+}
+
 // ---------- 分类与规则 ----------
 
 #[tauri::command]
@@ -699,6 +754,8 @@ pub fn run() {
             clear_cache,
             list_cached,
             sync_inbox,
+            prefetch_unread,
+            mark_all_read,
             list_categories,
             create_category,
             update_category,
