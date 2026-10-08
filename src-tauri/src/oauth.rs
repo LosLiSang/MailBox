@@ -19,6 +19,9 @@ use tauri::Url;
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
+/// MailBox 的公共客户端注册 ID（非密钥）；自定义设置可覆盖。
+const MICROSOFT_CLIENT_ID: &str = "88600fe5-f9d3-4b15-974d-1c299963a96e";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OAuthProvider {
@@ -66,7 +69,11 @@ impl OAuthProvider {
     fn client(self, apps: &OAuthApps) -> Result<(String, Option<String>), String> {
         let (id, secret) = match self {
             Self::Google => (&apps.google_client_id, Some(&apps.google_client_secret)),
-            Self::Microsoft => (&apps.microsoft_client_id, None),
+            Self::Microsoft => {
+                let configured = apps.microsoft_client_id.trim();
+                let id = if configured.is_empty() { MICROSOFT_CLIENT_ID } else { configured };
+                return Ok((id.to_string(), None));
+            },
         };
         if id.is_empty() || secret.is_some_and(|s| s.is_empty()) {
             return Err(format!(
@@ -516,7 +523,16 @@ mod tests {
     fn requires_client_config() {
         let mut apps = OAuthApps::default();
         assert!(OAuthProvider::Google.client(&apps).unwrap_err().contains("Client Secret"));
-        assert!(OAuthProvider::Microsoft.client(&apps).unwrap_err().contains("Client ID"));
+        // 新安装和旧设置的空 ID 都使用项目注册；显式配置仍优先。
+        for configured in ["", "   ", " m "] {
+            apps.microsoft_client_id = configured.into();
+            let expected = if configured.trim().is_empty() {
+                "88600fe5-f9d3-4b15-974d-1c299963a96e"
+            } else {
+                "m"
+            };
+            assert_eq!(OAuthProvider::Microsoft.client(&apps).unwrap(), (expected.into(), None));
+        }
 
         apps.google_client_id = "g".into();
         assert!(OAuthProvider::Google.client(&apps).is_err());

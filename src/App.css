@@ -10,7 +10,12 @@
   --danger: #cf222e;
   --hover: rgba(0, 0, 0, 0.04);
 
-  font-family: system-ui, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  /* 默认字体栈参考 Codex 桌面版（--font-sans-default / --font-mono-default），
+     末尾补微软雅黑作中文回退 */
+  --font-sans-default: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  --font-mono-default: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  font-family: var(--font-sans-default);
   font-size: 14px;
   --success: #1a7f37;
   --row-y: 10px;
@@ -590,7 +595,7 @@ textarea:focus {
 textarea {
   width: 100%;
   resize: vertical;
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--font-mono-default);
   font-size: 13px;
 }
 
@@ -1135,6 +1140,6 @@ input:disabled {
   --mail-font: "";
   --mail-size: 14px;
 
-  font-family: var(--ui-font), system-ui, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  font-family: var(--ui-font), var(--font-sans-default);
   font-size: calc(14px * var(--ui-scale));
 }

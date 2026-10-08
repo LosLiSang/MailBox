@@ -555,7 +555,7 @@ function ReadingTab({ draft, setDraft }: DraftProps) {
             checked={reading.remoteImages === "block"}
             onChange={() => setDraft({ ...draft, reading: { ...reading, remoteImages: "block" } })}
           />
-          默认拦截，点击后显示（推荐）
+          默认拦截，点击后显示
         </label>
         <label className="radio">
           <input
@@ -563,7 +563,7 @@ function ReadingTab({ draft, setDraft }: DraftProps) {
             checked={reading.remoteImages === "allow"}
             onChange={() => setDraft({ ...draft, reading: { ...reading, remoteImages: "allow" } })}
           />
-          总是显示
+          总是显示（默认）
         </label>
         <label className="checkbox">
           <input
@@ -876,12 +876,12 @@ function AdvancedTab({ draft, setDraft }: DraftProps) {
 
       <Section
         title="Microsoft OAuth 应用"
-        desc="Outlook / Hotmail 登录需要在 Azure 注册一个应用，平台选「移动和桌面应用程序」，重定向 URI 填 http://localhost。"
+        desc="Outlook / Hotmail 默认使用 MailBox 的 OAuth 应用，可直接在账号页登录，无需注册 Azure。只有需要使用自己的应用时才填写下方 ID；清空并保存可恢复默认。"
       >
         <label>
-          Application (client) ID
+          自定义 Application (client) ID（可选）
           <input
-            placeholder="00000000-0000-0000-0000-000000000000"
+            placeholder="留空使用 MailBox 默认应用"
             value={o.microsoftClientId}
             onChange={(e) => set({ microsoftClientId: e.currentTarget.value })}
           />

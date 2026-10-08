@@ -284,11 +284,13 @@ pub fn choose_mode(kind: ContentKind, app_dark: bool, pref: DarkPreference, forc
 fn base_style(family: &str, size: u32) -> String {
     // 字体名里的引号和反斜杠会破坏 CSS，去掉
     let clean = |s: &str| s.replace( '\u{27}' , "").replace( '"' , "").replace( '\\' , "");
+    // 默认栈与界面一致（参考 Codex 桌面版 --font-sans-default），末尾补微软雅黑作中文回退
+    const DEFAULT_STACK: &str = "-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"Microsoft YaHei UI\",sans-serif";
     let font_stack = if family.is_empty() {
-        "system-ui,\"Microsoft YaHei UI\",sans-serif".to_string()
+        DEFAULT_STACK.to_string()
     } else {
         // 自选字体放在最前，后面跟默认栈作回退
-        format!("\"{}\",system-ui,\"Microsoft YaHei UI\",sans-serif", clean(family))
+        format!("\"{}\",{DEFAULT_STACK}", clean(family))
     };
     let size = if size == 0 { 14 } else { size };
     format!(
@@ -899,15 +901,15 @@ mod tests {
     #[test]
     fn builds_font_style() {
         let doc = wrap_document_with_fonts("<p>x</p>", false, "m", RenderMode::Light, "楷体", 18);
-        assert!(doc.contains(r#"font-family:"楷体",system-ui"#));
+        assert!(doc.contains(r#"font-family:"楷体",-apple-system"#));
         assert!(doc.contains("font-size:18px"));
         // 非法字符被清理
         let doc = wrap_document_with_fonts("<p>x</p>", false, "m", RenderMode::Light, "a\"b", 0);
-        assert!(doc.contains(r#"font-family:"ab",system-ui"#));
+        assert!(doc.contains(r#"font-family:"ab",-apple-system"#));
         assert!(doc.contains("font-size:14px"));
         // 默认
         let doc = wrap_document_with_fonts("<p>x</p>", false, "m", RenderMode::Light, "", 0);
-        assert!(doc.contains("font-family:system-ui"));
+        assert!(doc.contains("font-family:-apple-system"));
         assert!(doc.contains("font-size:14px"));
     }
 
