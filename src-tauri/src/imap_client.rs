@@ -112,8 +112,23 @@ pub fn fetch_raw(s: &mut Session, uid: u32) -> imap::error::Result<Option<Vec<u8
         .map(<[u8]>::to_vec))
 }
 
-pub fn store_seen(s: &mut Session, uid: u32, seen: bool) -> imap::error::Result<()> {
+/// 预缓存前先检查大小，避免后台下载大型附件。PEEK 不改变已读状态。
+pub fn fetch_raw_bounded(s: &mut Session, uid: u32, max_bytes: u32) -> imap::error::Result<Option<Vec<u8>>> {
+    let sizes = s.uid_fetch(uid.to_string(), "(UID RFC822.SIZE)")?;
+    let size = sizes.iter().find(|f| f.uid == Some(uid)).and_then(|f| f.size);
+    if !matches!(size, Some(bytes) if bytes <= max_bytes) {
+        return Ok(None);
+    }
+    fetch_raw(s, uid)
+}
+
+pub fn store_seen_many(s: &mut Session, uids: &[u32], seen: bool) -> imap::error::Result<()> {
+    if uids.is_empty() { return Ok(()); }
     let op = if seen { "+FLAGS.SILENT" } else { "-FLAGS.SILENT" };
-    s.uid_store(uid.to_string(), format!(r"{op} (\Seen)"))?;
+    s.uid_store(crate::sync::uid_set(uids), format!(r"{op} (\Seen)"))?;
     Ok(())
+}
+
+pub fn store_seen(s: &mut Session, uid: u32, seen: bool) -> imap::error::Result<()> {
+    store_seen_many(s, &[uid], seen)
 }

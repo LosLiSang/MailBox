@@ -363,6 +363,7 @@ input {
 
 .account-text {
   display: flex;
+  flex: 1;
   flex-direction: column;
   min-width: 0;
 }
@@ -806,7 +807,8 @@ input:disabled {
 .settings {
   grid-column: 2 / -1;
   display: grid;
-  grid-template-columns: 180px 1fr;
+  grid-template-columns: clamp(148px, 11rem, 190px) minmax(0, 1fr);
+  min-width: 0;
   min-height: 0;
   background: var(--panel);
 }
@@ -814,8 +816,11 @@ input:disabled {
 .settings-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 12px 8px;
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 10px;
+  background: color-mix(in srgb, var(--sidebar) 45%, var(--panel));
   border-right: 1px solid var(--border);
 }
 
@@ -830,7 +835,9 @@ input:disabled {
 }
 
 .settings-tab {
-  padding: 8px 12px;
+  padding: 10px 12px;
+  font-size: 0.93rem;
+  line-height: 1.4;
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -852,19 +859,48 @@ input:disabled {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  container-type: inline-size;
 }
 
 .settings-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 8px 32px 32px;
+  scrollbar-gutter: stable;
+  padding: 28px clamp(16px, 3vw, 40px) 32px;
+}
+
+.settings-heading {
+  max-width: 760px;
+  margin: 0 auto 24px;
+}
+
+.settings-heading h1 {
+  margin: 0 0 6px;
+  font-size: 1.5rem;
+  line-height: 1.35;
+}
+
+.settings-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.settings :is(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 
 .settings-section {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-width: 640px;
+  width: 100%;
+  max-width: 760px;
+  min-width: 0;
+  margin: 0 auto;
   padding: 20px 0;
   border-bottom: 1px solid var(--border);
 }
@@ -891,11 +927,22 @@ input:disabled {
 }
 
 .settings-section .field {
-  flex-direction: row !important;
+  display: grid !important;
+  grid-template-columns: minmax(6rem, auto) minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
-  max-width: 420px;
+  gap: 16px;
+  width: 100%;
   color: var(--text) !important;
+}
+
+.settings-section .field > span {
+  white-space: nowrap;
+}
+
+.settings-section .field > select {
+  justify-self: end;
+  max-width: 100%;
+  min-width: 140px;
 }
 
 .settings-section .link {
@@ -904,15 +951,24 @@ input:disabled {
 
 .settings-footer {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 32px;
+  gap: 10px;
+  padding: 14px clamp(16px, 3vw, 40px);
+  background: var(--panel);
   border-top: 1px solid var(--border);
 }
 
-.settings-footer .error {
+.settings-save-status {
+  min-width: 0;
   margin-right: auto;
+  line-height: 1.5;
+}
+
+.settings-footer button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .account-rows {
@@ -1099,17 +1155,151 @@ input:disabled {
   padding: 3px 6px;
 }
 
-.font-preview {
-  max-width: 520px;
-  padding: 10px 14px;
-  border: 1px dashed var(--border);
+.appearance-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.appearance-settings .settings-section {
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.appearance-settings .settings-section > p.muted {
+  margin: -8px 0 0;
+  line-height: 1.6;
+}
+
+.theme-choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.theme-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
   border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+
+.theme-choice:hover {
+  background: var(--hover);
+}
+
+.theme-choice.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.theme-choice-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.86rem;
+}
+
+.theme-swatch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  height: 54px;
+  padding: 12px 12px 12px 28px;
+  border: 1px solid rgba(128, 128, 128, 0.2);
+  border-radius: 5px;
+  background: linear-gradient(90deg, #e5e7eb 18px, #f8fafc 18px);
+}
+
+.theme-swatch.dark {
+  background: linear-gradient(90deg, #111317 18px, #23272f 18px);
+}
+
+.theme-swatch.system {
+  background: linear-gradient(90deg, #e5e7eb 18px, #f8fafc 18px, #f8fafc 50%, #23272f 50%);
+}
+
+.theme-swatch > span {
+  height: 5px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  background: #a5b5cb;
+}
+
+.theme-swatch > span:nth-child(2) { width: 75%; }
+.theme-swatch > span:nth-child(3) { width: 50%; }
+
+.font-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px;
+  gap: 16px;
+}
+
+.font-controls > label {
+  min-width: 0;
+  gap: 8px !important;
+}
+
+.font-controls > label > span {
+  white-space: nowrap;
+}
+
+.font-controls select {
+  width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+.font-preview {
+  width: 100%;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
   overflow-wrap: anywhere;
 }
 
-.font-preview.mail {
+.preview-caption {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.font-preview p {
+  margin: 0;
   line-height: 1.7;
 }
+
+.font-preview .preview-secondary {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+@container (max-width: 520px) {
+  .settings-content { padding: 20px 16px; }
+  .appearance-settings .settings-section { padding: 16px; }
+  .font-controls { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .theme-choice { padding: 8px; }
+  .theme-choice-label { flex-wrap: wrap; font-size: 12px; }
+  .settings-section .field { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .settings-section .field > select { justify-self: stretch; width: 100%; }
+  .settings-footer { flex-wrap: wrap; padding: 12px 16px; }
+  .settings-save-status { flex-basis: 100%; }
+}
+
 
 .category-row {
   gap: 10px;

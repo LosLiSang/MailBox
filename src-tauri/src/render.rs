@@ -293,8 +293,15 @@ fn base_style(family: &str, size: u32) -> String {
         format!("\"{}\",{DEFAULT_STACK}", clean(family))
     };
     let size = if size == 0 { 14 } else { size };
+    // 明确选择正文家族时覆盖邮件自己的常规字体声明（含行内 font / font-family）。
+    // 只覆盖家族，不覆盖标题字号、粗细、颜色或布局；默认模式保留邮件原字体回退。
+    let override_family = if family.is_empty() {
+        String::new()
+    } else {
+        format!("html body,html body *{{font-family:{font_stack}!important}}")
+    };
     format!(
-        r#"body{{margin:16px;font-family:{font_stack};font-size:{size}px;line-height:1.6;word-wrap:break-word}}img{{max-width:100%;height:auto}}"#
+        r#"body{{margin:16px;font-family:{font_stack};font-size:{size}px;line-height:1.6;word-wrap:break-word}}img{{max-width:100%;height:auto}}{override_family}"#
     )
 }
 
@@ -508,11 +515,12 @@ pub fn wrap_document_with_fonts(
     mail_font_size: u32,
 ) -> String {
     // 放行远程内容时，图片已经改写成走本地转发（仍在 {base} 下）。
-    // 保留 https: http: 是为了兜住改写漏掉的引用（例如 <style> 里 @import 的字体样式）
+    // 只放行图片。外部 CSS（如 Medium 的 glyph 样式表）会阻塞首屏渲染，
+    // 外部字体也会延迟文字显示；保留内嵌样式并使用系统字体回退。
     let remote = if allow_remote { " https: http:" } else { "" };
     let csp = format!(
         "default-src 'none'; script-src 'none'; img-src {base} data:{remote}; \
-         style-src 'unsafe-inline'{remote}; font-src {base} data:{remote}; media-src {base}"
+         style-src 'unsafe-inline'; font-src data:; media-src {base}"
     );
     // Plain 邮件不含颜色样式，我们的样式放在前面即可；其余模式也不覆盖邮件自己的样式
     format!(
@@ -903,6 +911,8 @@ mod tests {
         let doc = wrap_document_with_fonts("<p>x</p>", false, "m", RenderMode::Light, "楷体", 18);
         assert!(doc.contains(r#"font-family:"楷体",-apple-system"#));
         assert!(doc.contains("font-size:18px"));
+        assert!(doc.contains(r#"html body,html body *{font-family:"楷体","#));
+        assert!(doc.contains("sans-serif!important}"));
         // 非法字符被清理
         let doc = wrap_document_with_fonts("<p>x</p>", false, "m", RenderMode::Light, "a\"b", 0);
         assert!(doc.contains(r#"font-family:"ab",-apple-system"#));
@@ -911,6 +921,7 @@ mod tests {
         let doc = wrap_document_with_fonts("<p>x</p>", false, "m", RenderMode::Light, "", 0);
         assert!(doc.contains("font-family:-apple-system"));
         assert!(doc.contains("font-size:14px"));
+        assert!(!doc.contains("html body *"));
     }
 
     #[test]
@@ -960,6 +971,13 @@ mod tests {
         let allowed = wrap_document("<p>x</p>", true, "mailbox://localhost/", RenderMode::Light);
         assert!(allowed.contains("img-src mailbox://localhost/ data: https: http:"));
         assert!(allowed.contains("script-src 'none'"));
+        // 允许图片不应放行会阻塞首屏显示的外部 CSS / 字体（Medium newsletter）。
+        let policy = allowed.split("content=\"").nth(1).unwrap().split('"').next().unwrap();
+        for directive in ["style-src", "font-src"] {
+            let value = policy.split(';').map(str::trim).find(|s| s.starts_with(directive)).unwrap();
+            assert!(!value.contains("https:") && !value.contains("http:"), "{value}");
+        }
+        assert!(policy.contains("style-src 'unsafe-inline'"));
     }
 
     #[test]

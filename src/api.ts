@@ -116,6 +116,8 @@ export const api = {
   listCached: (email: string, view: number | null, limit = LIST_LIMIT) =>
     invoke<Envelope[]>("list_cached", { email, view, limit }),
   syncInbox: (email: string) => invoke<SyncStats>("sync_inbox", { email }),
+  markAllRead: (email: string, view: number | null) => invoke<number[]>("mark_all_read", { email, view }),
+  prefetchUnread: (email: string) => invoke<number>("prefetch_unread", { email }),
 
   listCategories: (email: string) => invoke<Category[]>("list_categories", { email }),
   createCategory: (email: string, name: string, color: string) =>

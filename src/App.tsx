@@ -34,6 +34,11 @@ export default function App() {
   const noticeTimer = useRef<number>(undefined);
   /** 正在同步的账号，避免自动同步和手动同步重叠 */
   const syncing = useRef(new Set<string>());
+  const prefetching = useRef(new Set<string>());
+  const marking = useRef(new Set<string>());
+  const pendingSeen = useRef(new Map<string, number>());
+  const [markingAccounts, setMarkingAccounts] = useState<string[]>([]);
+  const activeViews = useRef<Record<string, number | null>>({});
 
   const current = accounts?.find((a) => a.email === selected) ?? null;
   const inbox = (selected && inboxes[selected]) || EMPTY_INBOX;
@@ -52,8 +57,10 @@ export default function App() {
 
   const loadCached = useCallback(
     async (email: string, view: number | null = null) => {
+      activeViews.current[email] = view;
       try {
-        patch(email, { view, mails: await api.listCached(email, view) });
+        const mails = await api.listCached(email, view);
+        if (activeViews.current[email] === view) patch(email, { view, mails });
       } catch (err) {
         patch(email, { error: String(err) });
       }
@@ -63,13 +70,20 @@ export default function App() {
 
   const sync = useCallback(
     async (email: string, { announce = false } = {}) => {
-      if (syncing.current.has(email)) return;
+      if (syncing.current.has(email) || marking.current.has(email)) return;
       syncing.current.add(email);
       patch(email, { syncing: true, error: null });
       try {
         const stats = await api.syncInbox(email);
-        patch(email, { mails: await api.listCached(email, inboxes[email]?.view ?? null), syncing: false });
+        await loadCached(email, activeViews.current[email] ?? null);
+        patch(email, { syncing: false });
         if (announce || stats.added > 0) showNotice(syncSummary(stats));
+        if (!prefetching.current.has(email)) {
+          prefetching.current.add(email);
+          void api.prefetchUnread(email)
+            .catch((err) => console.warn("未读邮件预缓存失败，下次打开时按需下载", err))
+            .finally(() => prefetching.current.delete(email));
+        }
       } catch (err) {
         // 同步失败时保留缓存，只提示错误（离线也能看）
         patch(email, { syncing: false, error: String(err) });
@@ -77,7 +91,7 @@ export default function App() {
         syncing.current.delete(email);
       }
     },
-    [patch, showNotice, inboxes],
+    [patch, showNotice, loadCached],
   );
 
   /** 先秒开本地缓存，再后台增量同步 */
@@ -165,14 +179,48 @@ export default function App() {
   }
 
   async function setSeen(mail: Envelope, seen: boolean) {
-    if (!selected) return;
+    if (!selected || marking.current.has(selected)) return;
     const email = selected;
+    pendingSeen.current.set(email, (pendingSeen.current.get(email) ?? 0) + 1);
     updateSeen(email, mail.uid, seen);
     try {
       await api.setSeen(email, mail.uid, seen);
     } catch (err) {
       updateSeen(email, mail.uid, !seen);
       showNotice(`同步已读状态失败: ${err}`);
+    } finally {
+      pendingSeen.current.set(email, (pendingSeen.current.get(email) ?? 1) - 1);
+    }
+  }
+
+  async function markAllRead() {
+    if (!selected || syncing.current.has(selected) || marking.current.has(selected)) return;
+    const email = selected;
+    if (pendingSeen.current.get(email)) {
+      showNotice("正在同步已读状态，请稍后再试");
+      return;
+    }
+    const view = inbox.view;
+    const label = view === null ? "收件箱" : view === -1 ? "全部邮件" : categories.find((c) => c.id === view)?.name ?? "当前分类";
+    if (!confirm(`将「${label}」中所有已缓存的未读邮件标为已读？\n\n包括未在当前列表中显示的缓存邮件，并同步到邮箱服务器。`)) return;
+    marking.current.add(email);
+    setMarkingAccounts((all) => [...all, email]);
+    try {
+      const uids = new Set(await api.markAllRead(email, view));
+      const count = uids.size;
+      setInboxes((all) => {
+        const box = all[email];
+        if (!box?.mails) return all;
+        return { ...all, [email]: { ...box, mails: box.mails.map((m) =>
+          uids.has(m.uid) ? { ...m, seen: true } : m,
+        ) } };
+      });
+      showNotice(count > 0 ? `已将 ${count} 封邮件标为已读` : "当前视图没有未读邮件");
+    } catch (err) {
+      showNotice(`全部已读失败，请重新同步后重试: ${err}`);
+    } finally {
+      marking.current.delete(email);
+      setMarkingAccounts((all) => all.filter((a) => a !== email));
     }
   }
 
@@ -382,9 +430,17 @@ export default function App() {
               </div>
               <div className="toolbar-actions">
                 <button
+                  className="ghost"
+                  onClick={markAllRead}
+                  disabled={inbox.mails === null || inbox.syncing || markingAccounts.includes(current.email)}
+                  title="将当前视图中所有已缓存的未读邮件标为已读（包括未显示的邮件）"
+                >
+                  {markingAccounts.includes(current.email) ? "标记中…" : "全部已读"}
+                </button>
+                <button
                   className="ghost icon"
                   onClick={() => sync(current.email, { announce: true })}
-                  disabled={inbox.syncing}
+                  disabled={inbox.syncing || markingAccounts.includes(current.email)}
                   title="同步"
                 >
                   <span className={inbox.syncing ? "spin" : ""}>⟳</span>
