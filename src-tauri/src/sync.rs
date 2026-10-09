@@ -82,6 +82,73 @@ pub fn uid_set(uids: &[u32]) -> String {
     parts.join(",")
 }
 
+/// 从服务器 UID 中挑出比 `before` 更早的最新 `count` 封（升序），用于「加载更多」
+pub fn older_page(server: impl IntoIterator<Item = u32>, before: u32, count: usize) -> Vec<u32> {
+    let mut uids: Vec<u32> = server.into_iter().filter(|&uid| uid < before).collect();
+    uids.sort_unstable();
+    uids.dedup();
+    let skip = uids.len().saturating_sub(count);
+    uids.drain(..skip);
+    uids
+}
+
+/// 加载比本地最早缓存更早的 `count` 封邮件头，返回新增数量；0 表示服务器上已经没有更早的了
+pub fn load_older(
+    db: &Db,
+    creds: &imap_client::Credentials,
+    account: &str,
+    folder: &str,
+    count: u32,
+) -> Result<usize, String> {
+    let mut session = imap_client::connect(creds).map_err(|e| e.to_string())?;
+    let result = load_older_with_session(&mut session, db, account, folder, count);
+    session.logout().ok();
+    result
+}
+
+fn load_older_with_session(
+    session: &mut imap_client::Session,
+    db: &Db,
+    account: &str,
+    folder: &str,
+    count: u32,
+) -> Result<usize, String> {
+    let e = |e: imap::Error| e.to_string();
+    let mailbox = session.select(folder).map_err(e)?;
+    if db.uid_validity(account, folder)? != mailbox.uid_validity {
+        return Err("邮箱已变化，请先同步再加载更多".into());
+    }
+    let Some(&(min_uid, _)) = db.cached_flags(account, folder)?.first() else {
+        return Ok(0);
+    };
+    if min_uid <= 1 {
+        return Ok(0);
+    }
+    let older = session
+        .uid_search(format!("UID 1:{}", min_uid - 1))
+        .map_err(e)?;
+    let uids = older_page(older, min_uid, count as usize);
+    if uids.is_empty() {
+        return Ok(0);
+    }
+
+    let rules = db.list_rules(account).ok();
+    let default_category = db.default_category(account).ok().flatten();
+    let envelopes: Vec<_> = imap_client::fetch_headers(session, &uid_set(&uids))
+        .map_err(e)?
+        .into_iter()
+        .map(|mut env| {
+            env.category_id = rules
+                .as_ref()
+                .and_then(|r| crate::rules::match_sender(r, &env.from_address, &env.from_name))
+                .or(default_category);
+            env
+        })
+        .collect();
+    db.apply_sync(account, folder, &[], &[], &envelopes)?;
+    Ok(envelopes.len())
+}
+
 pub fn sync_folder(
     db: &Db,
     creds: &imap_client::Credentials,
@@ -226,6 +293,25 @@ mod tests {
         ];
         for c in cases {
             assert_eq!(plan(c.cached, c.server, c.max_new), c.want, "{}", c.name);
+        }
+    }
+
+    #[test]
+    fn picks_older_page() {
+        let cases: &[(&[u32], u32, usize, &[u32])] = &[
+            (&[], 10, 5, &[]),
+            (&[1, 2, 3], 1, 5, &[]),
+            (&[1, 2, 3, 4], 10, 5, &[1, 2, 3, 4]),
+            (&[9, 1, 5, 3, 7], 8, 2, &[5, 7]),
+            // 服务器把 * 解释成最大 UID 时可能带回 >= before 的结果
+            (&[3, 10, 12], 10, 5, &[3]),
+        ];
+        for (server, before, count, want) in cases {
+            assert_eq!(
+                older_page(server.iter().copied(), *before, *count),
+                *want,
+                "{server:?} before {before}"
+            );
         }
     }
 

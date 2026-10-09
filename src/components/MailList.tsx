@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { Category, Envelope } from "../api";
 import { formatMailDate } from "../format";
 import { Avatar } from "./Avatar";
@@ -11,6 +11,8 @@ type Props = {
   /** 当前视图：null 收件箱，-1 全部，其他为分类 id */
   currentView: number | null;
   onMove: (mail: Envelope, view: number | null) => void;
+  /** 列表底部附加内容（如「加载更多」） */
+  footer?: ReactNode;
 };
 
 /** 右键 / 悬停菜单里可去的目标：收件箱（当前不在时）+ 其他分类 */
@@ -27,7 +29,7 @@ function moveTargets(mail: Envelope, categories: Category[], currentView: number
   return targets;
 }
 
-export function MailList({ mails, selectedUid, onSelect, categories, currentView, onMove }: Props) {
+export function MailList({ mails, selectedUid, onSelect, categories, currentView, onMove, footer }: Props) {
   const [menuFor, setMenuFor] = useState<number | null>(null);
 
   function closeMenu() {
@@ -35,6 +37,7 @@ export function MailList({ mails, selectedUid, onSelect, categories, currentView
   }
 
   return (
+    <>
     <ul className="mail-list" role="listbox" onClick={closeMenu} onContextMenu={closeMenu}>
       {mails.map((m) => {
         const sender = m.fromName || m.fromAddress || "(未知发件人)";
@@ -105,6 +108,8 @@ export function MailList({ mails, selectedUid, onSelect, categories, currentView
         );
       })}
     </ul>
+    {footer}
+    </>
   );
 }
 
