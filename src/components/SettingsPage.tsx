@@ -3,10 +3,11 @@ import { api, type Account, type CacheStats, type Category, type FontFamily, typ
 import { formatSize, move, parseSenderList } from "../format";
 import { providerById } from "../providers";
 import { Avatar } from "./Avatar";
+import { Icon } from "./Icon";
 
 const PALETTE = ["#d29922", "#539bf5", "#6e7781", "#f47067", "#3fb950", "#a371f7", "#db61a2", "#e5a38c"];
 
-type Tab = "accounts" | "categories" | "sync" | "reading" | "proxy" | "appearance" | "advanced";
+type Tab = "accounts" | "categories" | "sync" | "reading" | "proxy" | "appearance" | "advanced" | "about";
 
 const TABS: { id: Tab; label: string; desc: string }[] = [
   { id: "accounts", label: "账号", desc: "管理邮箱账号与连接方式。" },
@@ -16,6 +17,7 @@ const TABS: { id: Tab; label: string; desc: string }[] = [
   { id: "proxy", label: "代理", desc: "配置网络连接并测试可用性。" },
   { id: "appearance", label: "外观", desc: "调整主题、密度与字体，让阅读更舒适。" },
   { id: "advanced", label: "高级", desc: "管理自定义 OAuth 应用。" },
+  { id: "about", label: "关于", desc: "MailBox 版本与软件信息。" },
 ];
 
 type Props = {
@@ -82,8 +84,9 @@ export function SettingsPage(props: Props) {
   return (
     <div className="settings">
       <nav className="settings-nav" aria-label="设置分类">
-        <button className="ghost settings-back" onClick={close}>
-          ‹ 返回
+        <button className="settings-back" onClick={close}>
+          <Icon name="chevronLeft" size={15} />
+          返回
         </button>
         <h1>设置</h1>
         {TABS.map((t) => (
@@ -114,9 +117,10 @@ export function SettingsPage(props: Props) {
           )}
           {tab === "appearance" && <AppearanceTab draft={draft} setDraft={setDraft} />}
           {tab === "advanced" && <AdvancedTab draft={draft} setDraft={setDraft} />}
+          {tab === "about" && <AboutTab />}
         </div>
 
-        {tab !== "accounts" && (
+        {tab !== "accounts" && tab !== "about" && (
           <footer className="settings-footer">
             <span className={`settings-save-status ${error ? "error" : "muted"}`} role="status">
               {error ?? (saving ? "正在保存…" : dirty ? "有未保存的修改" : "所有设置已保存")}
@@ -198,16 +202,16 @@ function AccountsTab({ accounts, onAccountsChanged, onAddAccount, onEditAccount,
                 </div>
               </div>
               <div className="row-actions">
-                <button className="ghost small" onClick={() => reorder(i, i - 1)} disabled={i === 0} title="上移">
-                  ↑
+                <button className="ghost small icon-btn" onClick={() => reorder(i, i - 1)} disabled={i === 0} title="上移" aria-label="上移">
+                  <Icon name="chevronUp" size={13} />
                 </button>
                 <button
-                  className="ghost small"
+                  className="ghost small icon-btn"
                   onClick={() => reorder(i, i + 1)}
                   disabled={i === accounts.length - 1}
                   title="下移"
                 >
-                  ↓
+                  <Icon name="chevronDown" size={13} />
                 </button>
                 <button className="ghost small" onClick={() => test(a.email)} disabled={testing !== null}>
                   {testing === a.email ? "测试中…" : "测试连接"}
@@ -224,7 +228,8 @@ function AccountsTab({ accounts, onAccountsChanged, onAddAccount, onEditAccount,
         })}
       </ul>
       <button className="primary" onClick={onAddAccount}>
-        ＋ 添加账号
+        <Icon name="plus" size={14} />
+        添加账号
       </button>
     </Section>
   );
@@ -335,16 +340,16 @@ function CategoriesTab({ email, categories, onCategoriesChanged, notify }: Props
                     <span className="muted"> {c.count} 封</span>
                   </div>
                   <div className="row-actions">
-                    <button className="ghost small" onClick={() => reorder(i, i - 1)} disabled={i === 0} title="上移">
-                      ↑
+                    <button className="ghost small icon-btn" onClick={() => reorder(i, i - 1)} disabled={i === 0} title="上移" aria-label="上移">
+                      <Icon name="chevronUp" size={13} />
                     </button>
                     <button
-                      className="ghost small"
+                      className="ghost small icon-btn"
                       onClick={() => reorder(i, i + 1)}
                       disabled={i === categories.length - 1}
                       title="下移"
                     >
-                      ↓
+                      <Icon name="chevronDown" size={13} />
                     </button>
                     <button
                       className="ghost small"
@@ -501,6 +506,15 @@ function SyncTab({ draft, setDraft, onCacheCleared, notify }: DraftProps & Props
             ))}
           </select>
         </label>
+        <label className="field checkbox">
+          <input
+            type="checkbox"
+            checked={sync.desktopNotifications ?? true}
+            onChange={(e) => setDraft({ ...draft, sync: { ...sync, desktopNotifications: e.currentTarget.checked } })}
+          />
+          <span>新邮件桌面通知</span>
+        </label>
+        <p className="muted">收到新邮件时在系统任务栏右下角弹出桌面横幅通知。</p>
       </Section>
 
       <Section title="本地缓存" desc="邮件头和打开过的正文保存在本机，离线也能查看。">
@@ -705,11 +719,15 @@ function ProxyTab({ draft, setDraft, hasPassword, password, setPassword }: Proxy
             </div>
             <div className="server-row">
               <label className="grow">
-                用户名 <span className="optional">可选</span>
+                <span className="label-text">
+                  用户名 <span className="optional">可选</span>
+                </span>
                 <input value={proxy.username} onChange={(e) => set({ username: e.currentTarget.value })} />
               </label>
               <label className="grow">
-                密码 <span className="optional">{hasPassword && password === undefined ? "已保存，留空不修改" : "可选"}</span>
+                <span className="label-text">
+                  密码 <span className="optional">{hasPassword && password === undefined ? "已保存，留空不修改" : "可选"}</span>
+                </span>
                 <input
                   type="password"
                   value={password ?? ""}
@@ -915,5 +933,87 @@ function AdvancedTab({ draft, setDraft }: DraftProps) {
         </button>
       </Section>
     </>
+  );
+}
+
+// ---------- 关于：版本与软件信息 ----------
+
+function AboutTab() {
+  return (
+    <div className="about-tab">
+      <div className="about-hero">
+        <div className="about-logo">
+          <Icon name="mail" size={32} />
+        </div>
+        <div className="about-meta">
+          <div className="about-title-row">
+            <h2>MailBox</h2>
+            <span className="about-version">v0.1.0</span>
+          </div>
+          <p className="about-subtitle">轻量、高效、本地优先的现代桌面邮件客户端</p>
+        </div>
+      </div>
+
+      <Section title="核心亮点" desc="为高效阅读与干净无干扰的邮件体验而生。">
+        <div className="about-features-grid">
+          <div className="about-feature-item">
+            <strong>⚡ 秒开与离线</strong>
+            <span>本地 SQLite 极速缓存，打开即阅读，后台静默增量同步。</span>
+          </div>
+          <div className="about-feature-item">
+            <strong>🔔 原生体验</strong>
+            <span>Windows 任务栏数字未读角标徽标与新邮件桌面横幅通知。</span>
+          </div>
+          <div className="about-feature-item">
+            <strong>🛡️ 安全隔离</strong>
+            <span>系统级凭据保管箱（Keyring）加密保存，正文沙箱化隔离渲染。</span>
+          </div>
+          <div className="about-feature-item">
+            <strong>🎨 舒适阅读</strong>
+            <span>自适应智能深色模式、自定义字体字号与远程图片拦截。</span>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="软件信息" desc="运行环境与项目详情。">
+        <dl className="about-info-list">
+          <div>
+            <dt>核心架构</dt>
+            <dd>Tauri v2 · Rust · React 19 · TypeScript</dd>
+          </div>
+          <div>
+            <dt>目标平台</dt>
+            <dd>Windows x86_64 / x64</dd>
+          </div>
+          <div>
+            <dt>数据目录</dt>
+            <dd>%APPDATA%\com.mailbox.desktop</dd>
+          </div>
+        </dl>
+      </Section>
+
+      <Section title="项目与支持" desc="开源协作与问题反馈。">
+        <div className="about-links">
+          <button
+            className="secondary"
+            onClick={() => api.openExternal("https://github.com/LosLiSang/MailBox")}
+          >
+            GitHub 仓库
+          </button>
+          <button
+            className="secondary"
+            onClick={() => api.openExternal("https://github.com/LosLiSang/MailBox/releases")}
+          >
+            版本发布 (Releases)
+          </button>
+          <button
+            className="secondary"
+            onClick={() => api.openExternal("https://github.com/LosLiSang/MailBox/issues")}
+          >
+            反馈问题与建议
+          </button>
+        </div>
+      </Section>
+    </div>
   );
 }

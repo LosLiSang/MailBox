@@ -23,7 +23,9 @@ pub fn system_fonts() -> &'static [FontFamily] {
         let mut families: BTreeMap<String, (String, String, bool)> = BTreeMap::new();
         for face in db.faces() {
             // families[0] 是英文名，后面可能有本地化名
-            let Some((english, _)) = face.families.first() else { continue };
+            let Some((english, _)) = face.families.first() else {
+                continue;
+            };
             let local = face
                 .families
                 .iter()
@@ -40,7 +42,11 @@ pub fn system_fonts() -> &'static [FontFamily] {
 
         families
             .into_iter()
-            .map(|(_, (en, local, mono))| FontFamily { name: en, local_name: local, monospaced: mono })
+            .map(|(_, (en, local, mono))| FontFamily {
+                name: en,
+                local_name: local,
+                monospaced: mono,
+            })
             .collect()
     })
 }
@@ -56,7 +62,10 @@ mod tests {
         // Windows 上必然有微软雅黑 / Segoe UI；其他平台可能没有，所以只在 Windows 断言
         #[cfg(target_os = "windows")]
         {
-            assert!(fonts.iter().any(|f| f.name.contains("Microsoft YaHei")), "找不到微软雅黑");
+            assert!(
+                fonts.iter().any(|f| f.name.contains("Microsoft YaHei")),
+                "找不到微软雅黑"
+            );
         }
         // 排序且无重复
         let mut names: Vec<&str> = fonts.iter().map(|f| f.name.as_str()).collect();

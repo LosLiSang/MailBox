@@ -54,7 +54,7 @@ export type ContentKind = "plain" | "adaptive" | "colored" | "designed" | "dark"
 
 export type Settings = {
   proxy: { kind: ProxyKind; host: string; port: number; username: string };
-  sync: { window: number; autoSyncMinutes: number };
+  sync: { window: number; autoSyncMinutes: number; desktopNotifications: boolean };
   reading: {
     remoteImages: "block" | "allow";
     trustedSenders: string[];
@@ -85,6 +85,14 @@ export type Category = { id: number; name: string; color: string; count: number 
 export type Rule = { id: number; pattern: string; categoryId: number; categoryName: string; categoryColor: string };
 
 export type FontFamily = { name: string; localName: string; monospaced: boolean };
+
+export type BadgeUpdateParams = {
+  count: number;
+  iconRgba?: number[];
+  iconSize?: number;
+  overlayRgba?: number[];
+  overlaySize?: number;
+};
 
 export const LIST_LIMIT = 500;
 
@@ -146,4 +154,6 @@ export const api = {
   openAttachment: (email: string, uid: number, part: number) =>
     invoke<string>("open_attachment", { email, uid, part }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
+  getTotalUnread: () => invoke<number>("get_total_unread"),
+  updateBadge: (badge: BadgeUpdateParams) => invoke<void>("update_badge", { badge }),
 };

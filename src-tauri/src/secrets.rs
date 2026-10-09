@@ -22,7 +22,10 @@ pub const PROXY_PASSWORD_KEY: &str = "proxy";
 
 pub fn split_chunks(value: &str) -> Vec<String> {
     let chars: Vec<char> = value.chars().collect();
-    chars.chunks(CHUNK_CHARS).map(|c| c.iter().collect()).collect()
+    chars
+        .chunks(CHUNK_CHARS)
+        .map(|c| c.iter().collect())
+        .collect()
 }
 
 /// 主条目如果是分片标记，返回分片数量
@@ -49,7 +52,9 @@ fn raw_get(key: &str) -> Result<Option<String>, String> {
 }
 
 fn raw_set(key: &str, value: &str) -> Result<(), String> {
-    entry(key)?.set_password(value).map_err(|e| format!("保存凭据失败: {e}"))
+    entry(key)?
+        .set_password(value)
+        .map_err(|e| format!("保存凭据失败: {e}"))
 }
 
 fn raw_delete(key: &str) -> Result<(), String> {
@@ -60,8 +65,12 @@ fn raw_delete(key: &str) -> Result<(), String> {
 }
 
 pub fn get(key: &str) -> Result<Option<String>, String> {
-    let Some(stored) = raw_get(key)? else { return Ok(None) };
-    let Some(n) = parse_marker(&stored) else { return Ok(Some(stored)) };
+    let Some(stored) = raw_get(key)? else {
+        return Ok(None);
+    };
+    let Some(n) = parse_marker(&stored) else {
+        return Ok(Some(stored));
+    };
     let mut value = String::new();
     for i in 0..n {
         value.push_str(&raw_get(&chunk_key(key, i))?.ok_or("凭据分片缺失，请重新登录")?);

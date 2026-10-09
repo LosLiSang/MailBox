@@ -106,20 +106,36 @@ fn is_trivial_background(value: &str) -> bool {
     let v = value.trim().trim_end_matches(" !important");
     matches!(
         v,
-        "" | "none" | "transparent" | "inherit" | "initial" | "unset" | "white" | "#fff" | "#ffffff"
-            | "rgb(255,255,255)" | "rgb(255, 255, 255)" | "none transparent" | "transparent none"
+        "" | "none"
+            | "transparent"
+            | "inherit"
+            | "initial"
+            | "unset"
+            | "white"
+            | "#fff"
+            | "#ffffff"
+            | "rgb(255,255,255)"
+            | "rgb(255, 255, 255)"
+            | "none transparent"
+            | "transparent none"
     )
 }
 
 /// 把 #rgb / #rrggbb / rgb(r,g,b) / 常见颜色名解析成 RGB
 pub fn parse_color(value: &str) -> Option<(u8, u8, u8)> {
-    let v = value.trim().trim_end_matches("!important").trim().to_ascii_lowercase();
+    let v = value
+        .trim()
+        .trim_end_matches("!important")
+        .trim()
+        .to_ascii_lowercase();
     // background 简写里可能带 url()/repeat 等，取第一个像颜色的部分；rgb(...) 内部有空格，整段取出
     let token = if let Some(start) = v.find("rgb") {
         let end = v[start..].find(')').map_or(v.len(), |e| start + e + 1);
         &v[start..end]
     } else {
-        v.split_whitespace().find(|t| t.starts_with('#')).unwrap_or(&v)
+        v.split_whitespace()
+            .find(|t| t.starts_with('#'))
+            .unwrap_or(&v)
     };
     if let Some(hex) = token.strip_prefix('#') {
         let hex: String = hex.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
@@ -133,13 +149,21 @@ pub fn parse_color(value: &str) -> Option<(u8, u8, u8)> {
             _ => None,
         };
     }
-    if let Some(inner) = token.strip_prefix("rgba(").or_else(|| token.strip_prefix("rgb(")) {
+    if let Some(inner) = token
+        .strip_prefix("rgba(")
+        .or_else(|| token.strip_prefix("rgb("))
+    {
         let parts: Vec<u8> = inner
             .trim_end_matches(')')
             .split([',', ' ', '/'])
             .filter(|s| !s.is_empty())
             .take(3)
-            .map(|s| s.trim().parse::<f32>().ok().map(|f| f.clamp(0.0, 255.0) as u8))
+            .map(|s| {
+                s.trim()
+                    .parse::<f32>()
+                    .ok()
+                    .map(|f| f.clamp(0.0, 255.0) as u8)
+            })
             .collect::<Option<_>>()?;
         return (parts.len() == 3).then(|| (parts[0], parts[1], parts[2]));
     }
@@ -154,7 +178,11 @@ pub fn parse_color(value: &str) -> Option<(u8, u8, u8)> {
 pub fn luminance((r, g, b): (u8, u8, u8)) -> f32 {
     let lin = |c: u8| {
         let c = c as f32 / 255.0;
-        if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
     };
     0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
 }
@@ -163,12 +191,18 @@ pub fn luminance((r, g, b): (u8, u8, u8)) -> f32 {
 fn background_colors(lower: &str) -> Vec<(u8, u8, u8)> {
     ["background-color:", "background:", "bgcolor="]
         .iter()
-        .flat_map(|m| lower.match_indices(m).map(move |(i, _)| (i, &lower[i + m.len()..])))
+        .flat_map(|m| {
+            lower
+                .match_indices(m)
+                .map(move |(i, _)| (i, &lower[i + m.len()..]))
+        })
         .collect::<std::collections::BTreeMap<_, _>>()
         .into_values()
         .filter_map(|rest| {
             let v = value_after(rest);
-            (!is_trivial_background(v)).then(|| parse_color(v)).flatten()
+            (!is_trivial_background(v))
+                .then(|| parse_color(v))
+                .flatten()
         })
         .collect()
 }
@@ -221,7 +255,8 @@ pub fn declared_dark_support(lower: &str) -> Option<bool> {
 pub fn classify(html: &str) -> ContentKind {
     let lower = strip_comments(&html.to_ascii_lowercase());
 
-    let has_dark_media = lower.contains("prefers-color-scheme: dark") || lower.contains("prefers-color-scheme:dark");
+    let has_dark_media =
+        lower.contains("prefers-color-scheme: dark") || lower.contains("prefers-color-scheme:dark");
     match declared_dark_support(&lower) {
         Some(true) => return ContentKind::Adaptive,
         // 明确声明只支持浅色（color-scheme: normal / light），即使有深色媒体查询也不信任
@@ -232,13 +267,20 @@ pub fn classify(html: &str) -> ContentKind {
 
     let has_background = ["background-color:", "background:", "bgcolor="]
         .iter()
-        .any(|m| lower.match_indices(m).any(|(i, _)| !is_trivial_background(value_after(&lower[i + m.len()..]))))
+        .any(|m| {
+            lower
+                .match_indices(m)
+                .any(|(i, _)| !is_trivial_background(value_after(&lower[i + m.len()..])))
+        })
         || lower.contains("background-image:")
         || lower.contains("background=");
     let tables = lower.matches("<table").count();
     if has_background || tables >= 3 {
         // 最外层底色是深色 → 邮件本身就是深色设计
-        if background_colors(&lower).first().is_some_and(|&c| luminance(c) < 0.18) {
+        if background_colors(&lower)
+            .first()
+            .is_some_and(|&c| luminance(c) < 0.18)
+        {
             return ContentKind::Dark;
         }
         return ContentKind::Designed;
@@ -262,7 +304,12 @@ fn dark_variant(kind: ContentKind) -> RenderMode {
     }
 }
 
-pub fn choose_mode(kind: ContentKind, app_dark: bool, pref: DarkPreference, force_dark: Option<bool>) -> RenderMode {
+pub fn choose_mode(
+    kind: ContentKind,
+    app_dark: bool,
+    pref: DarkPreference,
+    force_dark: Option<bool>,
+) -> RenderMode {
     if !app_dark {
         return RenderMode::Light;
     }
@@ -283,9 +330,10 @@ pub fn choose_mode(kind: ContentKind, app_dark: bool, pref: DarkPreference, forc
 /// 正文基础样式。family / size 来自字体设置，空值用默认
 fn base_style(family: &str, size: u32) -> String {
     // 字体名里的引号和反斜杠会破坏 CSS，去掉
-    let clean = |s: &str| s.replace( '\u{27}' , "").replace( '"' , "").replace( '\\' , "");
+    let clean = |s: &str| s.replace('\u{27}', "").replace('"', "").replace('\\', "");
     // 默认栈与界面一致（参考 Codex 桌面版 --font-sans-default），末尾补微软雅黑作中文回退
-    const DEFAULT_STACK: &str = "-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"Microsoft YaHei UI\",sans-serif";
+    const DEFAULT_STACK: &str =
+        "-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"Microsoft YaHei UI\",sans-serif";
     let font_stack = if family.is_empty() {
         DEFAULT_STACK.to_string()
     } else {
@@ -309,7 +357,7 @@ fn mode_style(mode: RenderMode) -> &'static str {
     match mode {
         RenderMode::Light => "html{background:#fff;color:#1f2328;color-scheme:light}",
         // 背景和应用深色面板一致；引用的历史邮件用左边框区分
-        RenderMode::Dark => "html{background:#181b20;color:#e6e8eb;color-scheme:dark}a{color:#7aa2f7}\
+        RenderMode::Dark => "html{background:#1e1e1e;color:#e5e5e7;color-scheme:dark}a{color:#409cff}\
              blockquote{margin:8px 0;padding-left:12px;border-left:3px solid #3a3f47;color:#a0a8b3}\
              hr{border:none;border-top:1px solid #2a2e35}",
         // 只声明配色方案，其余交给邮件自己的 prefers-color-scheme 样式
@@ -333,13 +381,24 @@ pub struct PartRoute {
 
 pub fn part_url(base: &str, r: &PartRoute) -> String {
     let enc = |s: &str| utf8_percent_encode(s, NON_ALPHANUMERIC).to_string();
-    format!("{base}{}/{}/{}/{}", enc(&r.account), enc(&r.folder), r.uid, r.part)
+    format!(
+        "{base}{}/{}/{}/{}",
+        enc(&r.account),
+        enc(&r.folder),
+        r.uid,
+        r.part
+    )
 }
 
 /// 解析协议请求路径 `/<account>/<folder>/<uid>/<part>`
 pub fn parse_route(path: &str) -> Option<PartRoute> {
     let mut it = path.trim_start_matches('/').split('/');
-    let dec = |s: &str| percent_decode_str(s).decode_utf8().ok().map(|c| c.into_owned());
+    let dec = |s: &str| {
+        percent_decode_str(s)
+            .decode_utf8()
+            .ok()
+            .map(|c| c.into_owned())
+    };
     let route = PartRoute {
         account: dec(it.next()?)?,
         folder: dec(it.next()?)?,
@@ -400,7 +459,10 @@ pub fn rewrite_cid(html: &str, mut lookup: impl FnMut(&str) -> Option<String>) -
 pub const REMOTE_PATH: &str = "_remote";
 
 pub fn remote_proxy_url(base: &str, url: &str) -> String {
-    format!("{base}{REMOTE_PATH}?u={}", utf8_percent_encode(url, NON_ALPHANUMERIC))
+    format!(
+        "{base}{REMOTE_PATH}?u={}",
+        utf8_percent_encode(url, NON_ALPHANUMERIC)
+    )
 }
 
 /// 从转发请求的 query 里取回原地址
@@ -413,7 +475,11 @@ pub fn parse_remote_query(query: &str) -> Option<String> {
 /// 属性值里的 URL 先解码 HTML 实体（`&amp;` 等），浏览器请求时也是这么做的；
 /// 协议相对地址 `//host/x` 补成 https
 fn normalize_remote(raw: &str) -> Option<String> {
-    let url = raw.trim().replace("&amp;", "&").replace("&#38;", "&").replace("&#x26;", "&");
+    let url = raw
+        .trim()
+        .replace("&amp;", "&")
+        .replace("&#38;", "&")
+        .replace("&#x26;", "&");
     let lower = url.to_ascii_lowercase();
     if lower.starts_with("http://") || lower.starts_with("https://") {
         Some(url)
@@ -444,12 +510,17 @@ pub fn rewrite_remote_urls(html: &str, map: impl Fn(&str) -> String) -> String {
         while start < bytes.len() && matches!(bytes[start], b' ' | b'\t' | b'\n' | b'\r') {
             start += 1;
         }
-        let quote = bytes.get(start).copied().filter(|b| *b == b'"' || *b == b'\'');
+        let quote = bytes
+            .get(start)
+            .copied()
+            .filter(|b| *b == b'"' || *b == b'\'');
         if quote.is_some() {
             start += 1;
         }
         let end = match quote {
-            Some(q) => html[start..].find(q as char).map_or(html.len(), |e| start + e),
+            Some(q) => html[start..]
+                .find(q as char)
+                .map_or(html.len(), |e| start + e),
             None if marker == "url(" => html[start..].find(')').map_or(html.len(), |e| start + e),
             None => html[start..]
                 .find(|c: char| c.is_whitespace() || c == '>')
@@ -491,12 +562,16 @@ pub fn rewrite_remote_urls(html: &str, map: impl Fn(&str) -> String) -> String {
 /// 是否引用了远程图片/样式（追踪像素通常藏在这里）
 pub fn has_remote_content(html: &str) -> bool {
     let lower = html.to_ascii_lowercase();
-    ["src=", "background=", "url(", "srcset="].iter().any(|marker| {
-        lower.match_indices(marker).any(|(i, _)| {
-            let rest = lower[i + marker.len()..].trim_start_matches(['"', '\'', ' ']);
-            rest.starts_with("http://") || rest.starts_with("https://") || rest.starts_with("//")
+    ["src=", "background=", "url(", "srcset="]
+        .iter()
+        .any(|marker| {
+            lower.match_indices(marker).any(|(i, _)| {
+                let rest = lower[i + marker.len()..].trim_start_matches(['"', '\'', ' ']);
+                rest.starts_with("http://")
+                    || rest.starts_with("https://")
+                    || rest.starts_with("//")
+            })
         })
-    })
 }
 
 /// 包装成带 CSP 的完整文档（默认字体）。meta 放在最前面，浏览器会把它归入隐式的 <head>
@@ -533,10 +608,20 @@ pub fn wrap_document_with_fonts(
 pub fn sanitize_filename(name: &str) -> String {
     let cleaned: String = name
         .chars()
-        .map(|c| if c.is_control() || r#"<>:"/\|?*"#.contains(c) { '_' } else { c })
+        .map(|c| {
+            if c.is_control() || r#"<>:"/\|?*"#.contains(c) {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     let trimmed = cleaned.trim().trim_end_matches(['.', ' ']);
-    if trimmed.is_empty() { "attachment".into() } else { trimmed.into() }
+    if trimmed.is_empty() {
+        "attachment".into()
+    } else {
+        trimmed.into()
+    }
 }
 
 /// 生成不冲突的文件名：a.pdf -> a (1).pdf -> a (2).pdf
@@ -598,7 +683,11 @@ pub struct RenderOptions<'a> {
     pub mail_font_size: u32,
 }
 
-pub fn render(raw: &[u8], route_base: &PartRoute, opts: &RenderOptions) -> Result<MessageView, String> {
+pub fn render(
+    raw: &[u8],
+    route_base: &PartRoute,
+    opts: &RenderOptions,
+) -> Result<MessageView, String> {
     let msg = parse(raw).ok_or("无法解析邮件")?;
     let base = protocol_base();
 
@@ -607,7 +696,11 @@ pub fn render(raw: &[u8], route_base: &PartRoute, opts: &RenderOptions) -> Resul
         .iter()
         .enumerate()
         .filter_map(|(i, p)| {
-            let cid = p.content_id()?.trim().trim_start_matches('<').trim_end_matches('>');
+            let cid = p
+                .content_id()?
+                .trim()
+                .trim_start_matches('<')
+                .trim_end_matches('>');
             Some((cid.to_string(), i as u32))
         })
         .collect();
@@ -621,7 +714,13 @@ pub fn render(raw: &[u8], route_base: &PartRoute, opts: &RenderOptions) -> Resul
     let body = rewrite_cid(&body, |cid| {
         let part = *cid_map.get(cid)?;
         inline_parts.push(part);
-        Some(part_url(&base, &PartRoute { part, ..clone_route(route_base) }))
+        Some(part_url(
+            &base,
+            &PartRoute {
+                part,
+                ..clone_route(route_base)
+            },
+        ))
     });
 
     // 分类和远程内容检测都基于原始正文；放行远程图片时再改写成转发地址
@@ -639,7 +738,11 @@ pub fn render(raw: &[u8], route_base: &PartRoute, opts: &RenderOptions) -> Resul
         .filter(|id| !inline_parts.contains(id))
         .filter_map(|&id| {
             let part = msg.part(id)?;
-            let fallback = if matches!(part.body, PartType::Message(_)) { "邮件.eml" } else { "附件" };
+            let fallback = if matches!(part.body, PartType::Message(_)) {
+                "邮件.eml"
+            } else {
+                "附件"
+            };
             Some(Attachment {
                 part: id,
                 name: part.attachment_name().unwrap_or(fallback).to_string(),
@@ -649,7 +752,12 @@ pub fn render(raw: &[u8], route_base: &PartRoute, opts: &RenderOptions) -> Resul
         })
         .collect();
 
-    let render_mode = choose_mode(content_kind, opts.app_dark, opts.preference, opts.force_dark);
+    let render_mode = choose_mode(
+        content_kind,
+        opts.app_dark,
+        opts.preference,
+        opts.force_dark,
+    );
 
     Ok(MessageView {
         subject: msg.subject().unwrap_or("(无主题)").to_string(),
@@ -658,7 +766,14 @@ pub fn render(raw: &[u8], route_base: &PartRoute, opts: &RenderOptions) -> Resul
         cc: format_addresses(msg.cc()),
         date: msg.date().map(|d| d.to_rfc3339()),
         has_remote_content: has_remote,
-        html: wrap_document_with_fonts(&body, opts.allow_remote, &base, render_mode, opts.mail_family, opts.mail_font_size),
+        html: wrap_document_with_fonts(
+            &body,
+            opts.allow_remote,
+            &base,
+            render_mode,
+            opts.mail_family,
+            opts.mail_font_size,
+        ),
         attachments,
         content_kind,
         render_mode,
@@ -666,7 +781,12 @@ pub fn render(raw: &[u8], route_base: &PartRoute, opts: &RenderOptions) -> Resul
 }
 
 fn clone_route(r: &PartRoute) -> PartRoute {
-    PartRoute { account: r.account.clone(), folder: r.folder.clone(), uid: r.uid, part: r.part }
+    PartRoute {
+        account: r.account.clone(),
+        folder: r.folder.clone(),
+        uid: r.uid,
+        part: r.part,
+    }
 }
 
 /// 取出某个 MIME 部分：(文件名, MIME 类型, 内容)
@@ -685,12 +805,22 @@ mod tests {
     use super::*;
 
     fn route() -> PartRoute {
-        PartRoute { account: "a@qq.com".into(), folder: "INBOX".into(), uid: 42, part: 0 }
+        PartRoute {
+            account: "a@qq.com".into(),
+            folder: "INBOX".into(),
+            uid: 42,
+            part: 0,
+        }
     }
 
     #[test]
     fn route_roundtrip() {
-        let r = PartRoute { account: "张三+x@qq.com".into(), folder: "INBOX/子 文件夹".into(), uid: 7, part: 3 };
+        let r = PartRoute {
+            account: "张三+x@qq.com".into(),
+            folder: "INBOX/子 文件夹".into(),
+            uid: 7,
+            part: 3,
+        };
         let url = part_url("mailbox://localhost/", &r);
         let path = url.strip_prefix("mailbox://localhost").unwrap();
         assert_eq!(parse_route(path), Some(r));
@@ -698,14 +828,25 @@ mod tests {
 
     #[test]
     fn rejects_bad_routes() {
-        for path in ["/", "/a", "/a/INBOX/1", "/a/INBOX/x/1", "/a/INBOX/1/2/3", "//INBOX/1/2", "/a/INBOX/-1/2"] {
+        for path in [
+            "/",
+            "/a",
+            "/a/INBOX/1",
+            "/a/INBOX/x/1",
+            "/a/INBOX/1/2/3",
+            "//INBOX/1/2",
+            "/a/INBOX/-1/2",
+        ] {
             assert_eq!(parse_route(path), None, "{path}");
         }
     }
 
     #[test]
     fn escapes_html() {
-        assert_eq!(escape_html(r#"<a href="x">&'</a>"#), "&lt;a href=&quot;x&quot;&gt;&amp;&#39;&lt;/a&gt;");
+        assert_eq!(
+            escape_html(r#"<a href="x">&'</a>"#),
+            "&lt;a href=&quot;x&quot;&gt;&amp;&#39;&lt;/a&gt;"
+        );
     }
 
     #[test]
@@ -714,8 +855,14 @@ mod tests {
         let cases = [
             (r#"<img src="cid:img1@x">"#, r#"<img src="URL">"#),
             (r#"<img src='CID:img1@x'>"#, r#"<img src='URL'>"#),
-            (r#"<td style="background:url(cid:img1@x)">"#, r#"<td style="background:url(URL)">"#),
-            (r#"<img src="cid:unknown"> <img src="cid:img1@x">"#, r#"<img src="cid:unknown"> <img src="URL">"#),
+            (
+                r#"<td style="background:url(cid:img1@x)">"#,
+                r#"<td style="background:url(URL)">"#,
+            ),
+            (
+                r#"<img src="cid:unknown"> <img src="cid:img1@x">"#,
+                r#"<img src="cid:unknown"> <img src="URL">"#,
+            ),
             ("cid:", "cid:"),
             ("纯文本 no cid", "纯文本 no cid"),
         ];
@@ -728,25 +875,52 @@ mod tests {
     fn rewrites_remote_urls() {
         let map = |u: &str| format!("P[{u}]");
         let cases = [
-            (r#"<img src="https://a.com/x.png">"#, r#"<img src="P[https://a.com/x.png]">"#),
-            (r#"<img src='http://a.com/x.png'>"#, r#"<img src='P[http://a.com/x.png]'>"#),
-            ("<img src=https://a.com/x.png alt=x>", "<img src=P[https://a.com/x.png] alt=x>"),
-            (r#"<img SRC="//cdn.a.com/x.png">"#, r#"<img SRC="P[https://cdn.a.com/x.png]">"#),
+            (
+                r#"<img src="https://a.com/x.png">"#,
+                r#"<img src="P[https://a.com/x.png]">"#,
+            ),
+            (
+                r#"<img src='http://a.com/x.png'>"#,
+                r#"<img src='P[http://a.com/x.png]'>"#,
+            ),
+            (
+                "<img src=https://a.com/x.png alt=x>",
+                "<img src=P[https://a.com/x.png] alt=x>",
+            ),
+            (
+                r#"<img SRC="//cdn.a.com/x.png">"#,
+                r#"<img SRC="P[https://cdn.a.com/x.png]">"#,
+            ),
             // HTML 实体解码
-            (r#"<img src="https://a.com/x?a=1&amp;b=2">"#, r#"<img src="P[https://a.com/x?a=1&b=2]">"#),
-            (r#"<td background="https://a.com/bg.jpg">"#, r#"<td background="P[https://a.com/bg.jpg]">"#),
+            (
+                r#"<img src="https://a.com/x?a=1&amp;b=2">"#,
+                r#"<img src="P[https://a.com/x?a=1&b=2]">"#,
+            ),
+            (
+                r#"<td background="https://a.com/bg.jpg">"#,
+                r#"<td background="P[https://a.com/bg.jpg]">"#,
+            ),
             (
                 r#"<div style="background:url('https://a.com/bg.jpg') no-repeat">"#,
                 r#"<div style="background:url('P[https://a.com/bg.jpg]') no-repeat">"#,
             ),
-            ("<div style=\"background:url(https://a.com/b.jpg)\">", "<div style=\"background:url(P[https://a.com/b.jpg])\">"),
+            (
+                "<div style=\"background:url(https://a.com/b.jpg)\">",
+                "<div style=\"background:url(P[https://a.com/b.jpg])\">",
+            ),
             (
                 r#"<img srcset="https://a.com/1.png 1x, https://a.com/2.png 2x">"#,
                 r#"<img srcset="P[https://a.com/1.png] 1x, P[https://a.com/2.png] 2x">"#,
             ),
             // 不改：链接、本地、data、cid
-            (r#"<a href="https://a.com">x</a>"#, r#"<a href="https://a.com">x</a>"#),
-            (r#"<img src="data:image/png;base64,AA">"#, r#"<img src="data:image/png;base64,AA">"#),
+            (
+                r#"<a href="https://a.com">x</a>"#,
+                r#"<a href="https://a.com">x</a>"#,
+            ),
+            (
+                r#"<img src="data:image/png;base64,AA">"#,
+                r#"<img src="data:image/png;base64,AA">"#,
+            ),
             (r#"<img src="cid:logo">"#, r#"<img src="cid:logo">"#),
             ("plain text src= nothing", "plain text src= nothing"),
         ];
@@ -772,11 +946,24 @@ mod tests {
         let raw = b"Subject: t\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p><img src=\"https://img.example.com/a.png\"></p>\r\n";
         let blocked = render(raw, &route(), &light()).unwrap();
         assert!(blocked.has_remote_content);
-        assert!(blocked.html.contains("src=\"https://img.example.com/a.png\""));
+        assert!(blocked
+            .html
+            .contains("src=\"https://img.example.com/a.png\""));
 
-        let allowed = render(raw, &route(), &RenderOptions { allow_remote: true, ..light() }).unwrap();
+        let allowed = render(
+            raw,
+            &route(),
+            &RenderOptions {
+                allow_remote: true,
+                ..light()
+            },
+        )
+        .unwrap();
         assert!(allowed.has_remote_content);
-        assert!(allowed.html.contains(&format!("{}_remote?u=https%3A%2F%2Fimg%2Eexample%2Ecom%2Fa%2Epng", protocol_base())));
+        assert!(allowed.html.contains(&format!(
+            "{}_remote?u=https%3A%2F%2Fimg%2Eexample%2Ecom%2Fa%2Epng",
+            protocol_base()
+        )));
     }
 
     #[test]
@@ -813,33 +1000,69 @@ mod tests {
         use ContentKind::*;
         let cases = [
             ("<pre>纯文本邮件</pre>", Plain),
-            (r#"<div dir="ltr">Hi,<br>see you<blockquote>old</blockquote></div>"#, Plain),
-            (r#"<div style="background-color: #ffffff">白底等于没背景</div>"#, Plain),
+            (
+                r#"<div dir="ltr">Hi,<br>see you<blockquote>old</blockquote></div>"#,
+                Plain,
+            ),
+            (
+                r#"<div style="background-color: #ffffff">白底等于没背景</div>"#,
+                Plain,
+            ),
             (r#"<body style="background:transparent">x</body>"#, Plain),
-            (r#"<meta name="color-scheme" content="light dark"><p>x</p>"#, Adaptive),
-            ("<style>@media (prefers-color-scheme: dark){body{background:#000}}</style>", Adaptive),
-            (r#"<meta name="color-scheme" content="light dark only"><p>x</p>"#, Adaptive),
+            (
+                r#"<meta name="color-scheme" content="light dark"><p>x</p>"#,
+                Adaptive,
+            ),
+            (
+                "<style>@media (prefers-color-scheme: dark){body{background:#000}}</style>",
+                Adaptive,
+            ),
+            (
+                r#"<meta name="color-scheme" content="light dark only"><p>x</p>"#,
+                Adaptive,
+            ),
             // 注释里提到深色、但声明只支持浅色（SpaceX 邮件）→ 不是深色适配
             (
                 r##"<meta name="color-scheme" content="normal"><style>/* skip prefers-color-scheme: dark path */
                    :root{color-scheme: normal}</style><table bgcolor="#fefefe"><tr><td>x</td></tr></table>"##,
                 Designed,
             ),
-            ("<!-- @media (prefers-color-scheme: dark) --><p>纯文本</p>", Plain),
+            (
+                "<!-- @media (prefers-color-scheme: dark) --><p>纯文本</p>",
+                Plain,
+            ),
             (r#"<p style="color:#1F497D">Outlook 正文</p>"#, Colored),
             (r#"<font color="red">重要</font>"#, Colored),
             ("<style>a:link{color:#0563C1}</style><p>x</p>", Colored),
             (r##"<td bgcolor="#f4f4f4">x</td>"##, Designed),
-            (r#"<div style="background-color:#1a73e8;color:#fff">按钮</div>"#, Designed),
+            (
+                r#"<div style="background-color:#1a73e8;color:#fff">按钮</div>"#,
+                Designed,
+            ),
             (r#"<div style="background: url(x.png)">x</div>"#, Designed),
             (r#"<div style="background-image:url(x)">x</div>"#, Designed),
-            ("<table><tr><td><table><tr><td><table></table></td></tr></table></td></tr></table>", Designed),
+            (
+                "<table><tr><td><table><tr><td><table></table></td></tr></table></td></tr></table>",
+                Designed,
+            ),
             // 最外层是深色底（Steam 风格），内部按钮是亮色也不影响
-            (r##"<body style="background-color:#2f261c"><a style="background:#ebbb67">买</a></body>"##, Dark),
-            (r#"<table bgcolor="black"><tr><td>x</td></tr></table>"#, Dark),
-            (r#"<div style="background: rgb(20, 20, 30) url(x.png)">x</div>"#, Dark),
+            (
+                r##"<body style="background-color:#2f261c"><a style="background:#ebbb67">买</a></body>"##,
+                Dark,
+            ),
+            (
+                r#"<table bgcolor="black"><tr><td>x</td></tr></table>"#,
+                Dark,
+            ),
+            (
+                r#"<div style="background: rgb(20, 20, 30) url(x.png)">x</div>"#,
+                Dark,
+            ),
             // 最外层是白底、里面有深色横幅 → 仍然是浅色设计
-            (r##"<div style="background:#f4f4f4"><div style="background:#000">banner</div></div>"##, Designed),
+            (
+                r##"<div style="background:#f4f4f4"><div style="background:#000">banner</div></div>"##,
+                Designed,
+            ),
         ];
         for (html, want) in cases {
             assert_eq!(classify(html), want, "{html}");
@@ -874,7 +1097,11 @@ mod tests {
             (Dark, true, Auto, Some(true), M::Light),
         ];
         for (kind, dark, pref, force, want) in cases {
-            assert_eq!(choose_mode(kind, dark, pref, force), want, "{kind:?} dark={dark} {pref:?} {force:?}");
+            assert_eq!(
+                choose_mode(kind, dark, pref, force),
+                want,
+                "{kind:?} dark={dark} {pref:?} {force:?}"
+            );
         }
     }
 
@@ -894,8 +1121,14 @@ mod tests {
     #[test]
     fn detects_declared_color_scheme() {
         let cases = [
-            (r#"<meta name="color-scheme" content="light dark">"#, Some(true)),
-            (r#"<meta name="supported-color-schemes" content="light">"#, Some(false)),
+            (
+                r#"<meta name="color-scheme" content="light dark">"#,
+                Some(true),
+            ),
+            (
+                r#"<meta name="supported-color-schemes" content="light">"#,
+                Some(false),
+            ),
             (":root{color-scheme: normal}", Some(false)),
             (":root{color-scheme:light dark}", Some(true)),
             ("@media (prefers-color-scheme: dark){}", None),
@@ -952,7 +1185,7 @@ mod tests {
     fn mode_styles() {
         let doc = |m| wrap_document("<p>x</p>", false, "mailbox://localhost/", m);
         assert!(doc(RenderMode::Light).contains("background:#fff"));
-        assert!(doc(RenderMode::Dark).contains("background:#181b20"));
+        assert!(doc(RenderMode::Dark).contains("background:#1e1e1e"));
         assert!(doc(RenderMode::Adaptive).contains("color-scheme:dark"));
         assert!(!doc(RenderMode::Adaptive).contains("background:"));
         let invert = doc(RenderMode::Invert);
@@ -972,10 +1205,23 @@ mod tests {
         assert!(allowed.contains("img-src mailbox://localhost/ data: https: http:"));
         assert!(allowed.contains("script-src 'none'"));
         // 允许图片不应放行会阻塞首屏显示的外部 CSS / 字体（Medium newsletter）。
-        let policy = allowed.split("content=\"").nth(1).unwrap().split('"').next().unwrap();
+        let policy = allowed
+            .split("content=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
         for directive in ["style-src", "font-src"] {
-            let value = policy.split(';').map(str::trim).find(|s| s.starts_with(directive)).unwrap();
-            assert!(!value.contains("https:") && !value.contains("http:"), "{value}");
+            let value = policy
+                .split(';')
+                .map(str::trim)
+                .find(|s| s.starts_with(directive))
+                .unwrap();
+            assert!(
+                !value.contains("https:") && !value.contains("http:"),
+                "{value}"
+            );
         }
         assert!(policy.contains("style-src 'unsafe-inline'"));
     }
@@ -1041,14 +1287,22 @@ JVBERi0=\r\n\
 
         // 内联图片被改写，且不出现在附件列表里
         assert!(!view.html.contains("cid:logo@x"));
-        assert!(view.html.contains(&format!("{}a%40qq%2Ecom/INBOX/42/", protocol_base())));
+        assert!(view
+            .html
+            .contains(&format!("{}a%40qq%2Ecom/INBOX/42/", protocol_base())));
 
         assert_eq!(view.attachments.len(), 1);
         let att = &view.attachments[0];
-        assert_eq!((att.name.as_str(), att.mime.as_str(), att.size), ("报价单.pdf", "application/pdf", 5));
+        assert_eq!(
+            (att.name.as_str(), att.mime.as_str(), att.size),
+            ("报价单.pdf", "application/pdf", 5)
+        );
 
         let (name, mime, data) = extract_part(MULTIPART, att.part).unwrap();
-        assert_eq!((name.as_str(), mime.as_str(), data.as_slice()), ("报价单.pdf", "application/pdf", &b"%PDF-"[..]));
+        assert_eq!(
+            (name.as_str(), mime.as_str(), data.as_slice()),
+            ("报价单.pdf", "application/pdf", &b"%PDF-"[..])
+        );
     }
 
     #[test]
@@ -1061,7 +1315,10 @@ JVBERi0=\r\n\
         assert_eq!(view.content_kind, ContentKind::Plain);
         assert_eq!(view.render_mode, RenderMode::Light);
 
-        let dark = RenderOptions { app_dark: true, ..light() };
+        let dark = RenderOptions {
+            app_dark: true,
+            ..light()
+        };
         let view = render(raw, &route(), &dark).unwrap();
         assert_eq!(view.render_mode, RenderMode::Dark);
     }

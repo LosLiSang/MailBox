@@ -42,7 +42,11 @@ impl imap::Authenticator for XOAuth2 {
     fn process(&self, challenge: &[u8]) -> String {
         // 首次质询为空，返回凭据；认证失败时服务器会带着错误详情再次质询，
         // 按 XOAUTH2 协议回空串，服务器随后返回 NO 结束认证
-        if challenge.is_empty() { self.0.clone() } else { String::new() }
+        if challenge.is_empty() {
+            self.0.clone()
+        } else {
+            String::new()
+        }
     }
 }
 
@@ -50,7 +54,9 @@ impl imap::Authenticator for XOAuth2 {
 pub fn open(host: &str, port: u16, proxy: &ProxyConfig) -> Result<Client, MailError> {
     let tcp = net::connect_tcp(proxy, host, port).map_err(MailError::Net)?;
     let tls = native_tls::TlsConnector::new().map_err(|e| MailError::Tls(e.to_string()))?;
-    let stream = tls.connect(host, tcp).map_err(|e| MailError::Tls(e.to_string()))?;
+    let stream = tls
+        .connect(host, tcp)
+        .map_err(|e| MailError::Tls(e.to_string()))?;
     let mut client = imap::Client::new(stream);
     client.read_greeting()?;
     Ok(client)
@@ -62,9 +68,10 @@ pub fn connect(c: &Credentials) -> Result<Session, MailError> {
     // 会留下未读的 tagged OK，导致后续命令标签错位并 panic。
     let session = match &c.auth {
         Auth::Password(p) => client.login(c.username, p),
-        Auth::OAuth(token) => {
-            client.authenticate("XOAUTH2", &XOAuth2(oauth::xoauth2_payload(c.username, token)))
-        }
+        Auth::OAuth(token) => client.authenticate(
+            "XOAUTH2",
+            &XOAuth2(oauth::xoauth2_payload(c.username, token)),
+        ),
     };
     Ok(session.map_err(|(e, _)| e)?)
 }
@@ -80,7 +87,10 @@ fn is_seen(f: &Fetch) -> bool {
 }
 
 fn flags_of(fetches: &[Fetch]) -> Vec<(u32, bool)> {
-    fetches.iter().filter_map(|f| Some((f.uid?, is_seen(f)))).collect()
+    fetches
+        .iter()
+        .filter_map(|f| Some((f.uid?, is_seen(f))))
+        .collect()
 }
 
 /// 按序号区间（如 "81:100"）拉取 (uid, seen)
@@ -113,9 +123,16 @@ pub fn fetch_raw(s: &mut Session, uid: u32) -> imap::error::Result<Option<Vec<u8
 }
 
 /// 预缓存前先检查大小，避免后台下载大型附件。PEEK 不改变已读状态。
-pub fn fetch_raw_bounded(s: &mut Session, uid: u32, max_bytes: u32) -> imap::error::Result<Option<Vec<u8>>> {
+pub fn fetch_raw_bounded(
+    s: &mut Session,
+    uid: u32,
+    max_bytes: u32,
+) -> imap::error::Result<Option<Vec<u8>>> {
     let sizes = s.uid_fetch(uid.to_string(), "(UID RFC822.SIZE)")?;
-    let size = sizes.iter().find(|f| f.uid == Some(uid)).and_then(|f| f.size);
+    let size = sizes
+        .iter()
+        .find(|f| f.uid == Some(uid))
+        .and_then(|f| f.size);
     if !matches!(size, Some(bytes) if bytes <= max_bytes) {
         return Ok(None);
     }
@@ -123,8 +140,14 @@ pub fn fetch_raw_bounded(s: &mut Session, uid: u32, max_bytes: u32) -> imap::err
 }
 
 pub fn store_seen_many(s: &mut Session, uids: &[u32], seen: bool) -> imap::error::Result<()> {
-    if uids.is_empty() { return Ok(()); }
-    let op = if seen { "+FLAGS.SILENT" } else { "-FLAGS.SILENT" };
+    if uids.is_empty() {
+        return Ok(());
+    }
+    let op = if seen {
+        "+FLAGS.SILENT"
+    } else {
+        "-FLAGS.SILENT"
+    };
     s.uid_store(crate::sync::uid_set(uids), format!(r"{op} (\Seen)"))?;
     Ok(())
 }

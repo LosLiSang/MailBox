@@ -35,6 +35,7 @@ base64 = "0.22"
 getrandom = "0.3"
 socks = "0.3"
 fontdb = "0.24.0"
+tauri-plugin-notification = "2"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

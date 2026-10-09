@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type Account } from "../api";
 import { detectProvider, PROVIDERS, providerById, unsupportedReason, type Provider } from "../providers";
+import { Icon } from "./Icon";
 
 type Props = {
   open: boolean;
@@ -177,8 +178,8 @@ export function AccountDialog({ open, editing, proxyConfigured, onClose, onSaved
         <form className="dialog-body" onSubmit={oauth ? (isEdit ? saveOAuthEdit : (e) => e.preventDefault()) : submitPassword}>
           <h2>
             {!isEdit && (
-              <button type="button" className="back" onClick={() => setProvider(null)} disabled={Boolean(busy)}>
-                ‹
+              <button type="button" className="back" onClick={() => setProvider(null)} disabled={Boolean(busy)} aria-label="返回">
+                <Icon name="chevronLeft" size={18} />
               </button>
             )}
             {provider.icon} {isEdit ? `编辑 ${editing!.email}` : provider.name}
@@ -190,7 +191,9 @@ export function AccountDialog({ open, editing, proxyConfigured, onClose, onSaved
                 <>
                   <p className="hint">点击下方按钮会在浏览器中打开 {provider.name} 登录页，授权后自动返回。</p>
                   <label>
-                    邮箱地址 <span className="optional">可选，用于预填登录页</span>
+                    <span className="label-text">
+                      邮箱地址 <span className="optional">可选，用于预填登录页</span>
+                    </span>
                     <input
                       type="email"
                       placeholder={`you@${provider.domains[0]}`}
@@ -201,7 +204,9 @@ export function AccountDialog({ open, editing, proxyConfigured, onClose, onSaved
                 </>
               )}
               <label>
-                显示名称 <span className="optional">可选</span>
+                <span className="label-text">
+                  显示名称 <span className="optional">可选</span>
+                </span>
                 <input
                   placeholder={provider.name}
                   value={form.displayName}
@@ -212,7 +217,7 @@ export function AccountDialog({ open, editing, proxyConfigured, onClose, onSaved
 
               {busy === "oauth" ? (
                 <div className="oauth-waiting">
-                  <span className="spin">⟳</span> 等待浏览器中完成登录…
+                  <Icon name="refresh" size={15} className="spin" /> 等待浏览器中完成登录…
                   <button type="button" className="link" onClick={() => api.cancelOAuth()}>
                     取消
                   </button>
@@ -244,7 +249,9 @@ export function AccountDialog({ open, editing, proxyConfigured, onClose, onSaved
                 />
               </label>
               <label>
-                显示名称 <span className="optional">可选</span>
+                <span className="label-text">
+                  显示名称 <span className="optional">可选</span>
+                </span>
                 <input
                   placeholder={provider.name}
                   value={form.displayName}
@@ -252,8 +259,10 @@ export function AccountDialog({ open, editing, proxyConfigured, onClose, onSaved
                 />
               </label>
               <label>
-                {provider.secretLabel}
-                {isEdit && <span className="optional">留空表示不修改</span>}
+                <span className="label-text">
+                  {provider.secretLabel}
+                  {isEdit && <span className="optional">留空表示不修改</span>}
+                </span>
                 <input
                   type="password"
                   placeholder={isEdit ? "••••••••" : provider.secretLabel === "密码" ? "" : "不是登录密码"}

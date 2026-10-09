@@ -169,13 +169,41 @@ describe("theme", async () => {
   });
 
   it.each([
-    ["dark", false, "#181b20"],
-    ["adaptive", false, "#181b20"],
+    ["dark", false, "#1e1e1e"],
+    ["adaptive", false, "#1e1e1e"],
     ["invert", false, "#1a1a1a"],
     ["light", true, "#ffffff"],
-    [undefined, true, "#181b20"],
+    [undefined, true, "#1e1e1e"],
     [undefined, false, "#ffffff"],
   ] as const)("frameBackground(%s, appDark=%s) -> %s", (mode, dark, want) => {
     expect(frameBackground(mode, dark)).toBe(want);
+  });
+});
+
+describe("layout", async () => {
+  const { clampListWidth, parseStored, LIST_MIN_WIDTH, LIST_MAX_WIDTH, LIST_DEFAULT_WIDTH } = await import("./layout");
+
+  it.each([
+    [400, 1600, 228, 400],
+    [100, 1600, 228, LIST_MIN_WIDTH],
+    [5000, 3000, 228, LIST_MAX_WIDTH],
+    // 窗口较窄：给阅读区留 360
+    [700, 1200, 228, 1200 - 228 - 360],
+    // 窗口过窄：至少保持最小宽度
+    [500, 700, 228, LIST_MIN_WIDTH],
+    [NaN, 1600, 228, LIST_DEFAULT_WIDTH],
+    [333.6, 1600, 64, 334],
+  ])("clampListWidth(%s, window=%s, sidebar=%s) -> %s", (w, win, side, want) => {
+    expect(clampListWidth(w, win, side)).toBe(want);
+  });
+
+  it.each([
+    [null, true, true],
+    ["false", true, false],
+    ["420", 360, 420],
+    ['"x"', 360, 360],
+    ["{bad", false, false],
+  ] as const)("parseStored(%s, %s) -> %s", (raw, fallback, want) => {
+    expect(parseStored(raw, fallback)).toBe(want);
   });
 });

@@ -28,7 +28,8 @@ fn is_valid_color(c: &str) -> bool {
 }
 
 /// 每次升级表结构时在末尾追加一条，按 user_version 依次执行
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE folder_state (
     account       TEXT NOT NULL,
     folder        TEXT NOT NULL,
@@ -55,7 +56,8 @@ CREATE TABLE bodies (
     fetched_at    TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (account, folder, uid)
 );
-"#, r#"
+"#,
+    r#"
 -- 本地分类：每个账号一套，邮件移进分类后不再出现在收件箱里
 CREATE TABLE categories (
     account    TEXT NOT NULL,
@@ -78,7 +80,8 @@ CREATE TABLE sender_rules (
 ALTER TABLE messages ADD COLUMN category_id INTEGER;
 CREATE INDEX idx_messages_category ON messages (account, category_id);
 CREATE INDEX idx_rules_account ON sender_rules (account);
-"#];
+"#,
+];
 
 pub struct Db {
     conn: Mutex<Connection>,
@@ -108,10 +111,15 @@ impl Db {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(err)?;
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
-            conn.execute_batch(&format!("BEGIN; {sql} PRAGMA user_version = {}; COMMIT;", i + 1))
-                .map_err(err)?;
+            conn.execute_batch(&format!(
+                "BEGIN; {sql} PRAGMA user_version = {}; COMMIT;",
+                i + 1
+            ))
+            .map_err(err)?;
         }
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     fn with<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> Result<T, String> {
@@ -131,7 +139,12 @@ impl Db {
     }
 
     /// UIDVALIDITY 变化说明服务器重建了文件夹，旧 UID 全部作废
-    pub fn reset_folder(&self, account: &str, folder: &str, uid_validity: u32) -> Result<(), String> {
+    pub fn reset_folder(
+        &self,
+        account: &str,
+        folder: &str,
+        uid_validity: u32,
+    ) -> Result<(), String> {
         self.with(|c| {
             let tx = c.transaction()?;
             tx.execute("DELETE FROM messages WHERE account = ?1 AND folder = ?2", params![account, folder])?;
@@ -244,7 +257,13 @@ impl Db {
         })
     }
 
-    pub fn set_seen(&self, account: &str, folder: &str, uid: u32, seen: bool) -> Result<(), String> {
+    pub fn set_seen(
+        &self,
+        account: &str,
+        folder: &str,
+        uid: u32,
+        seen: bool,
+    ) -> Result<(), String> {
         self.with(|c| {
             c.execute(
                 "UPDATE messages SET seen = ?4 WHERE account = ?1 AND folder = ?2 AND uid = ?3",
@@ -271,7 +290,36 @@ impl Db {
         })
     }
 
-    pub fn set_seen_many(&self, account: &str, folder: &str, uids: &[u32], seen: bool) -> Result<(), String> {
+    /// 查询所有账号已缓存的未读邮件总数
+    pub fn total_unread(&self) -> Result<u32, String> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM messages WHERE seen = 0",
+                [],
+                |r| r.get(0),
+            )
+        })
+    }
+
+    /// 查询指定账号已缓存的未读邮件数
+    #[allow(dead_code)]
+    pub fn account_unread(&self, account: &str) -> Result<u32, String> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM messages WHERE account = ?1 AND seen = 0",
+                params![account],
+                |r| r.get(0),
+            )
+        })
+    }
+
+    pub fn set_seen_many(
+        &self,
+        account: &str,
+        folder: &str,
+        uids: &[u32],
+        seen: bool,
+    ) -> Result<(), String> {
         self.with(|c| {
             let tx = c.transaction()?;
             for uid in uids {
@@ -285,7 +333,12 @@ impl Db {
     }
 
     /// 最新的、尚未缓存原始正文的未读邮件（跨本地分类）。
-    pub fn prefetch_candidates(&self, account: &str, folder: &str, limit: u32) -> Result<Vec<u32>, String> {
+    pub fn prefetch_candidates(
+        &self,
+        account: &str,
+        folder: &str,
+        limit: u32,
+    ) -> Result<Vec<u32>, String> {
         self.with(|c| {
             let mut stmt = c.prepare(
                 "SELECT m.uid FROM messages m WHERE m.account = ?1 AND m.folder = ?2 AND m.seen = 0
@@ -298,7 +351,12 @@ impl Db {
         })
     }
 
-    pub fn get_body(&self, account: &str, folder: &str, uid: u32) -> Result<Option<Vec<u8>>, String> {
+    pub fn get_body(
+        &self,
+        account: &str,
+        folder: &str,
+        uid: u32,
+    ) -> Result<Option<Vec<u8>>, String> {
         self.with(|c| {
             c.query_row(
                 "SELECT raw FROM bodies WHERE account = ?1 AND folder = ?2 AND uid = ?3",
@@ -309,7 +367,13 @@ impl Db {
         })
     }
 
-    pub fn put_body(&self, account: &str, folder: &str, uid: u32, raw: &[u8]) -> Result<(), String> {
+    pub fn put_body(
+        &self,
+        account: &str,
+        folder: &str,
+        uid: u32,
+        raw: &[u8],
+    ) -> Result<(), String> {
         self.with(|c| {
             c.execute(
                 "INSERT OR REPLACE INTO bodies (account, folder, uid, raw) VALUES (?1, ?2, ?3, ?4)",
@@ -322,8 +386,11 @@ impl Db {
     /// (邮件头数, 已缓存正文数, 正文总字节数)
     pub fn stats(&self, account: &str) -> Result<(u64, u64, u64), String> {
         self.with(|c| {
-            let headers: i64 =
-                c.query_row("SELECT count(*) FROM messages WHERE account = ?1", params![account], |r| r.get(0))?;
+            let headers: i64 = c.query_row(
+                "SELECT count(*) FROM messages WHERE account = ?1",
+                params![account],
+                |r| r.get(0),
+            )?;
             let (bodies, bytes): (i64, i64) = c.query_row(
                 "SELECT count(*), coalesce(sum(length(raw)), 0) FROM bodies WHERE account = ?1",
                 params![account],
@@ -341,7 +408,9 @@ impl Db {
 
     /// 清空全部缓存，下次同步从头拉取
     pub fn clear_all(&self) -> Result<(), String> {
-        self.with(|c| c.execute_batch("DELETE FROM bodies; DELETE FROM messages; DELETE FROM folder_state;"))?;
+        self.with(|c| {
+            c.execute_batch("DELETE FROM bodies; DELETE FROM messages; DELETE FROM folder_state;")
+        })?;
         self.vacuum()
     }
 
@@ -353,10 +422,16 @@ impl Db {
         self.with(|c| {
             let tx = c.transaction()?;
             for table in ["messages", "bodies", "folder_state"] {
-                tx.execute(&format!("DELETE FROM {table} WHERE account = ?1"), params![account])?;
+                tx.execute(
+                    &format!("DELETE FROM {table} WHERE account = ?1"),
+                    params![account],
+                )?;
             }
             // 分类和规则跟着账号一起删（sender_rules 由外键级联）
-            tx.execute("DELETE FROM categories WHERE account = ?1", params![account])?;
+            tx.execute(
+                "DELETE FROM categories WHERE account = ?1",
+                params![account],
+            )?;
             tx.commit()
         })
     }
@@ -404,13 +479,23 @@ impl Db {
                  ORDER BY cat.position, cat.id",
             )?;
             let rows = stmt.query_map(params![account], |r| {
-                Ok(Category { id: r.get(0)?, name: r.get(1)?, color: r.get(2)?, count: r.get(3)? })
+                Ok(Category {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    color: r.get(2)?,
+                    count: r.get(3)?,
+                })
             })?;
             rows.collect()
         })
     }
 
-    pub fn create_category(&self, account: &str, name: &str, color: &str) -> Result<Category, String> {
+    pub fn create_category(
+        &self,
+        account: &str,
+        name: &str,
+        color: &str,
+    ) -> Result<Category, String> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 20 {
             return Err("分类名称需为 1–20 个字符".into());
@@ -449,7 +534,13 @@ impl Db {
     }
 
     /// 重命名 / 改颜色；None 表示不修改
-    pub fn update_category(&self, account: &str, id: i64, name: Option<&str>, color: Option<&str>) -> Result<(), String> {
+    pub fn update_category(
+        &self,
+        account: &str,
+        id: i64,
+        name: Option<&str>,
+        color: Option<&str>,
+    ) -> Result<(), String> {
         let name = name.map(str::trim);
         if let Some(n) = name {
             if n.is_empty() || n.chars().count() > 20 {
@@ -470,7 +561,9 @@ impl Db {
                 params![account, id, name, color.map(str::to_lowercase)],
             )
         })?;
-        (n == 1).then_some(()).ok_or_else(|| "分类不存在".to_string())
+        (n == 1)
+            .then_some(())
+            .ok_or_else(|| "分类不存在".to_string())
     }
 
     /// 删除分类：里面的邮件回到收件箱，相关规则一并删除。返回是否真的删除了
@@ -481,8 +574,14 @@ impl Db {
                 "UPDATE messages SET category_id = NULL WHERE account = ?1 AND category_id = ?2",
                 params![account, id],
             )?;
-            tx.execute("DELETE FROM sender_rules WHERE account = ?1 AND category_id = ?2", params![account, id])?;
-            let n = tx.execute("DELETE FROM categories WHERE account = ?1 AND id = ?2", params![account, id])?;
+            tx.execute(
+                "DELETE FROM sender_rules WHERE account = ?1 AND category_id = ?2",
+                params![account, id],
+            )?;
+            let n = tx.execute(
+                "DELETE FROM categories WHERE account = ?1 AND id = ?2",
+                params![account, id],
+            )?;
             tx.commit()?;
             Ok::<_, rusqlite::Error>(n)
         })?;
@@ -503,7 +602,12 @@ impl Db {
     }
 
     /// 移动邮件到分类；category_id 为 None 表示移回收件箱
-    pub fn move_messages(&self, account: &str, uids: &[u32], category_id: Option<i64>) -> Result<usize, String> {
+    pub fn move_messages(
+        &self,
+        account: &str,
+        uids: &[u32],
+        category_id: Option<i64>,
+    ) -> Result<usize, String> {
         self.with(|c| {
             let tx = c.transaction()?;
             let mut n = 0;
@@ -531,8 +635,15 @@ impl Db {
     }
 
     /// 返回规则 id 和实际归类到的邮件数；apply_existing 同时把已缓存的匹配邮件归类
-    pub fn add_rule(&self, account: &str, pattern: &str, category_id: i64, apply_existing: bool) -> Result<(i64, usize), String> {
-        let pattern = crate::rules::normalize_pattern(pattern).ok_or("规则格式不正确：可用 @域名、完整邮箱或至少两个字的关键词")?;
+    pub fn add_rule(
+        &self,
+        account: &str,
+        pattern: &str,
+        category_id: i64,
+        apply_existing: bool,
+    ) -> Result<(i64, usize), String> {
+        let pattern = crate::rules::normalize_pattern(pattern)
+            .ok_or("规则格式不正确：可用 @域名、完整邮箱或至少两个字的关键词")?;
         self.with(|c| {
             let tx = c.transaction()?;
             let category_exists: bool = tx
@@ -588,8 +699,15 @@ impl Db {
     }
 
     pub fn delete_rule(&self, account: &str, id: i64) -> Result<(), String> {
-        let n = self.with(|c| c.execute("DELETE FROM sender_rules WHERE account = ?1 AND id = ?2", params![account, id]))?;
-        (n == 1).then_some(()).ok_or_else(|| "规则不存在".to_string())
+        let n = self.with(|c| {
+            c.execute(
+                "DELETE FROM sender_rules WHERE account = ?1 AND id = ?2",
+                params![account, id],
+            )
+        })?;
+        (n == 1)
+            .then_some(())
+            .ok_or_else(|| "规则不存在".to_string())
     }
 
     /// 规则的排序（位置越小优先级越高）
@@ -648,13 +766,29 @@ mod tests {
         db.reset_folder(A, F, 100).unwrap();
         assert_eq!(db.uid_validity(A, F).unwrap(), Some(100));
 
-        db.apply_sync(A, F, &[], &[], &[env(1, true), env(2, false), env(3, false)]).unwrap();
+        db.apply_sync(
+            A,
+            F,
+            &[],
+            &[],
+            &[env(1, true), env(2, false), env(3, false)],
+        )
+        .unwrap();
         db.put_body(A, F, 2, b"raw2").unwrap();
-        assert_eq!(db.cached_flags(A, F).unwrap(), [(1, true), (2, false), (3, false)]);
+        assert_eq!(db.total_unread().unwrap(), 2);
+        assert_eq!(db.account_unread(A).unwrap(), 2);
+        assert_eq!(
+            db.cached_flags(A, F).unwrap(),
+            [(1, true), (2, false), (3, false)]
+        );
 
         // 删除 2（连带正文）、3 标记已读、新增 4
-        db.apply_sync(A, F, &[2], &[(3, true)], &[env(4, false)]).unwrap();
-        assert_eq!(db.cached_flags(A, F).unwrap(), [(1, true), (3, true), (4, false)]);
+        db.apply_sync(A, F, &[2], &[(3, true)], &[env(4, false)])
+            .unwrap();
+        assert_eq!(
+            db.cached_flags(A, F).unwrap(),
+            [(1, true), (3, true), (4, false)]
+        );
         assert_eq!(db.get_body(A, F, 2).unwrap(), None);
 
         let list = db.list_envelopes(A, F, 2, View::Inbox).unwrap();
@@ -675,7 +809,14 @@ mod tests {
     #[test]
     fn categories_and_rules_lifecycle() {
         let db = Db::open_in_memory().unwrap();
-        db.apply_sync(A, F, &[], &[], &[env(1, false), env(2, false), env(3, false)]).unwrap();
+        db.apply_sync(
+            A,
+            F,
+            &[],
+            &[],
+            &[env(1, false), env(2, false), env(3, false)],
+        )
+        .unwrap();
 
         // 默认分类幂等
         db.default_categories(A).unwrap();
@@ -688,12 +829,15 @@ mod tests {
         let junk = cats.iter().find(|c| c.name == "垃圾邮件").unwrap();
         assert_eq!(db.move_messages(A, &[2], Some(junk.id)).unwrap(), 1);
         assert_eq!(db.list_envelopes(A, F, 100, View::Inbox).unwrap().len(), 2);
-        let in_junk = db.list_envelopes(A, F, 100, View::Category(junk.id)).unwrap();
+        let in_junk = db
+            .list_envelopes(A, F, 100, View::Category(junk.id))
+            .unwrap();
         assert_eq!(in_junk.iter().map(|e| e.uid).collect::<Vec<_>>(), [2]);
         assert_eq!(in_junk[0].category_id, Some(junk.id));
 
         // 全部已读的范围独立于列表分页，分类与账号互不影响。
-        db.apply_sync("other", F, &[], &[], &[env(1, false)]).unwrap();
+        db.apply_sync("other", F, &[], &[], &[env(1, false)])
+            .unwrap();
         assert_eq!(db.unread_uids(A, F, View::Inbox).unwrap(), [3, 1]);
         assert_eq!(db.unread_uids(A, F, View::Category(junk.id)).unwrap(), [2]);
         db.set_seen_many(A, F, &[3, 1], true).unwrap();
@@ -711,8 +855,16 @@ mod tests {
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].category_id, important.id);
         // 三封邮件的发件人都是 x@y.z，收件箱被清空
-        assert!(db.list_envelopes(A, F, 100, View::Inbox).unwrap().is_empty());
-        assert_eq!(db.list_envelopes(A, F, 100, View::Category(important.id)).unwrap().len(), 3);
+        assert!(db
+            .list_envelopes(A, F, 100, View::Inbox)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            db.list_envelopes(A, F, 100, View::Category(important.id))
+                .unwrap()
+                .len(),
+            3
+        );
 
         // 新邮件走同步路径：apply_sync 不会动 category_id，但删除时连带清理
         db.apply_sync(A, F, &[3], &[], &[]).unwrap();
@@ -726,10 +878,14 @@ mod tests {
         assert!(db.create_category(A, "临时", "red").is_err());
 
         // 重命名 + 改色
-        db.update_category(A, junk.id, Some("垃圾"), Some("#FF0000")).unwrap();
+        db.update_category(A, junk.id, Some("垃圾"), Some("#FF0000"))
+            .unwrap();
         let cats = db.list_categories(A).unwrap();
         let junk = cats.iter().find(|c| c.id == junk.id).unwrap();
-        assert_eq!((junk.name.as_str(), junk.color.as_str()), ("垃圾", "#ff0000"));
+        assert_eq!(
+            (junk.name.as_str(), junk.color.as_str()),
+            ("垃圾", "#ff0000")
+        );
 
         // 删除分类：邮件回收件箱，规则一并删除
         assert!(db.delete_category(A, junk.id).unwrap());
@@ -762,7 +918,8 @@ mod tests {
     fn stats_and_clearing() {
         let db = Db::open_in_memory().unwrap();
         db.reset_folder(A, F, 1).unwrap();
-        db.apply_sync(A, F, &[], &[], &[env(1, false), env(2, false)]).unwrap();
+        db.apply_sync(A, F, &[], &[], &[env(1, false), env(2, false)])
+            .unwrap();
         db.put_body(A, F, 1, b"12345").unwrap();
         assert_eq!(db.stats(A).unwrap(), (2, 1, 5));
         assert_eq!(db.prefetch_candidates(A, F, 10).unwrap(), [2]);

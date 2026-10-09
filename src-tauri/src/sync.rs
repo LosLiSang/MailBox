@@ -53,7 +53,11 @@ pub fn plan(cached: &[(u32, bool)], server: &[(u32, bool)], max_new: usize) -> S
     let skip = new_uids.len().saturating_sub(max_new);
     new_uids.drain(..skip);
 
-    SyncPlan { deleted, flag_changes, new_uids }
+    SyncPlan {
+        deleted,
+        flag_changes,
+        new_uids,
+    }
 }
 
 /// 把 UID 列表压缩成 IMAP 序列集，如 [1,2,3,5,7,8] -> "1:3,5,7:8"
@@ -69,7 +73,11 @@ pub fn uid_set(uids: &[u32]) -> String {
         while iter.peek() == Some(&(end + 1)) {
             end = iter.next().unwrap();
         }
-        parts.push(if start == end { start.to_string() } else { format!("{start}:{end}") });
+        parts.push(if start == end {
+            start.to_string()
+        } else {
+            format!("{start}:{end}")
+        });
     }
     parts.join(",")
 }
@@ -138,7 +146,13 @@ fn sync_with_session(
             .collect()
     };
 
-    db.apply_sync(account, folder, &plan.deleted, &plan.flag_changes, &new_envelopes)?;
+    db.apply_sync(
+        account,
+        folder,
+        &plan.deleted,
+        &plan.flag_changes,
+        &new_envelopes,
+    )?;
 
     Ok(SyncStats {
         added: new_envelopes.len(),
@@ -166,7 +180,10 @@ mod tests {
                 cached: &[],
                 server: &[(5, true), (3, false), (4, false)],
                 max_new: 10,
-                want: SyncPlan { new_uids: vec![3, 4, 5], ..Default::default() },
+                want: SyncPlan {
+                    new_uids: vec![3, 4, 5],
+                    ..Default::default()
+                },
             },
             Case {
                 name: "无变化",
@@ -191,14 +208,20 @@ mod tests {
                 cached: &[(1, true)],
                 server: &[(1, true), (2, false), (3, false), (4, false), (5, false)],
                 max_new: 2,
-                want: SyncPlan { new_uids: vec![4, 5], ..Default::default() },
+                want: SyncPlan {
+                    new_uids: vec![4, 5],
+                    ..Default::default()
+                },
             },
             Case {
                 name: "服务器清空",
                 cached: &[(1, true), (2, false)],
                 server: &[],
                 max_new: 10,
-                want: SyncPlan { deleted: vec![1, 2], ..Default::default() },
+                want: SyncPlan {
+                    deleted: vec![1, 2],
+                    ..Default::default()
+                },
             },
         ];
         for c in cases {

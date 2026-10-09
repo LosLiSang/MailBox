@@ -56,12 +56,18 @@ pub fn validate_proxy(p: &ProxyConfig) -> Result<(), String> {
 }
 
 /// 生成 HTTP CONNECT 请求
-pub fn connect_request(target_host: &str, target_port: u16, username: &str, password: &str) -> String {
+pub fn connect_request(
+    target_host: &str,
+    target_port: u16,
+    username: &str,
+    password: &str,
+) -> String {
     let mut req = format!(
         "CONNECT {target_host}:{target_port} HTTP/1.1\r\nHost: {target_host}:{target_port}\r\n"
     );
     if !username.is_empty() {
-        let token = base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+        let token =
+            base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
         req.push_str(&format!("Proxy-Authorization: Basic {token}\r\n"));
     }
     req.push_str("\r\n");
@@ -72,7 +78,10 @@ pub fn connect_request(target_host: &str, target_port: u16, username: &str, pass
 pub fn parse_connect_status(head: &str) -> Result<(), String> {
     let line = head.lines().next().unwrap_or_default();
     let mut parts = line.splitn(3, ' ');
-    let (version, code) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
+    let (version, code) = (
+        parts.next().unwrap_or_default(),
+        parts.next().unwrap_or_default(),
+    );
     if !version.starts_with("HTTP/") {
         return Err(format!("代理返回了无法识别的响应: {line}"));
     }
@@ -101,7 +110,10 @@ fn read_http_head(stream: &mut TcpStream) -> io::Result<String> {
     let mut byte = [0u8; 1];
     while !buf.ends_with(b"\r\n\r\n") {
         if stream.read(&mut byte)? == 0 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "代理提前关闭了连接"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "代理提前关闭了连接",
+            ));
         }
         buf.push(byte[0]);
         if buf.len() > 16 * 1024 {
@@ -122,8 +134,10 @@ pub fn connect_tcp(proxy: &ProxyConfig, host: &str, port: u16) -> Result<TcpStre
             ProxyKind::Http => {
                 let mut s = tcp_connect(ph, pp).map_err(proxy_err)?;
                 s.set_read_timeout(Some(CONNECT_TIMEOUT)).ok();
-                s.write_all(connect_request(host, port, &proxy.username, &proxy.password).as_bytes())
-                    .map_err(proxy_err)?;
+                s.write_all(
+                    connect_request(host, port, &proxy.username, &proxy.password).as_bytes(),
+                )
+                .map_err(proxy_err)?;
                 parse_connect_status(&read_http_head(&mut s).map_err(proxy_err)?)?;
                 s
             }
@@ -133,7 +147,12 @@ pub fn connect_tcp(proxy: &ProxyConfig, host: &str, port: u16) -> Result<TcpStre
                 let result = if proxy.username.is_empty() {
                     socks::Socks5Stream::connect((ph, pp), target)
                 } else {
-                    socks::Socks5Stream::connect_with_password((ph, pp), target, &proxy.username, &proxy.password)
+                    socks::Socks5Stream::connect_with_password(
+                        (ph, pp),
+                        target,
+                        &proxy.username,
+                        &proxy.password,
+                    )
                 };
                 result.map_err(proxy_err)?.into_inner()
             }
@@ -152,7 +171,9 @@ pub fn http_agent(proxy: &ProxyConfig) -> Result<ureq::Agent, String> {
             ProxyKind::Http => ureq::ProxyProtocol::Http,
             _ => ureq::ProxyProtocol::Socks5h,
         };
-        let mut b = ureq::Proxy::builder(protocol).host(proxy.host.trim()).port(proxy.port);
+        let mut b = ureq::Proxy::builder(protocol)
+            .host(proxy.host.trim())
+            .port(proxy.port);
         if !proxy.username.is_empty() {
             b = b.username(&proxy.username).password(&proxy.password);
         }
@@ -179,7 +200,12 @@ mod tests {
     use super::*;
 
     fn proxy(kind: ProxyKind, host: &str, port: u16) -> ProxyConfig {
-        ProxyConfig { kind, host: host.into(), port, ..Default::default() }
+        ProxyConfig {
+            kind,
+            host: host.into(),
+            port,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -219,7 +245,10 @@ mod tests {
         let cases = [
             ("HTTP/1.1 200 Connection established\r\n\r\n", Ok(())),
             ("HTTP/1.0 200 OK\r\n\r\n", Ok(())),
-            ("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n", Err("认证")),
+            (
+                "HTTP/1.1 407 Proxy Authentication Required\r\n\r\n",
+                Err("认证"),
+            ),
             ("HTTP/1.1 502 Bad Gateway\r\n\r\n", Err("拒绝")),
             ("SSH-2.0-OpenSSH\r\n\r\n", Err("无法识别")),
             ("", Err("无法识别")),

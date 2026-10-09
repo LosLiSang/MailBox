@@ -25,8 +25,8 @@ export type RenderMode = "light" | "dark" | "adaptive" | "invert";
 
 /** iframe 加载前的底色，避免深色界面里闪一下白屏 */
 export function frameBackground(mode: RenderMode | undefined, appDark: boolean): string {
-  if (mode === "dark" || mode === "adaptive") return "#181b20";
+  if (mode === "dark" || mode === "adaptive") return "#1e1e1e";
   if (mode === "invert") return "#1a1a1a";
   if (mode === "light") return "#ffffff";
-  return appDark ? "#181b20" : "#ffffff";
+  return appDark ? "#1e1e1e" : "#ffffff";
 }

@@ -66,7 +66,10 @@ pub fn normalize_email(email: &str) -> String {
 pub fn validate(account: &AccountConfig) -> Result<(), String> {
     let email = &account.email;
     let valid_email = email.split_once('@').is_some_and(|(local, domain)| {
-        !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.')
+        !local.is_empty()
+            && domain.contains('.')
+            && !domain.starts_with('.')
+            && !domain.ends_with('.')
     });
     if !valid_email {
         return Err(format!("邮箱地址格式不正确: {email}"));
@@ -96,7 +99,12 @@ pub fn remove(accounts: &mut Vec<AccountConfig>, email: &str) -> bool {
 
 /// 按给定顺序重排；未出现在 order 里的账号保持原相对顺序放在末尾
 pub fn reorder(accounts: &mut Vec<AccountConfig>, order: &[String]) {
-    let rank = |a: &AccountConfig| order.iter().position(|e| *e == a.email).unwrap_or(usize::MAX);
+    let rank = |a: &AccountConfig| {
+        order
+            .iter()
+            .position(|e| *e == a.email)
+            .unwrap_or(usize::MAX)
+    };
     accounts.sort_by_key(rank);
 }
 
@@ -108,7 +116,9 @@ pub struct AccountStore {
 
 impl AccountStore {
     pub fn new(config_dir: &Path) -> Self {
-        Self { path: config_dir.join(CONFIG_FILE) }
+        Self {
+            path: config_dir.join(CONFIG_FILE),
+        }
     }
 
     pub fn list(&self) -> Result<Vec<AccountConfig>, String> {
@@ -125,7 +135,8 @@ impl AccountStore {
         if let Some(dir) = self.path.parent() {
             fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
-        let text = serde_json::to_string_pretty(&ConfigFile { accounts }).map_err(|e| e.to_string())?;
+        let text =
+            serde_json::to_string_pretty(&ConfigFile { accounts }).map_err(|e| e.to_string())?;
         // 先写临时文件再改名，避免写一半崩溃导致配置损坏
         let tmp = self.path.with_extension("json.tmp");
         fs::write(&tmp, text).map_err(|e| e.to_string())?;
@@ -194,8 +205,20 @@ mod tests {
             (acc("@qq.com", ""), false),
             (acc("a@qq", ""), false),
             (acc("a@.com", ""), false),
-            (AccountConfig { host: " ".into(), ..acc("a@qq.com", "") }, false),
-            (AccountConfig { port: 0, ..acc("a@qq.com", "") }, false),
+            (
+                AccountConfig {
+                    host: " ".into(),
+                    ..acc("a@qq.com", "")
+                },
+                false,
+            ),
+            (
+                AccountConfig {
+                    port: 0,
+                    ..acc("a@qq.com", "")
+                },
+                false,
+            ),
         ];
         for (account, ok) in cases {
             assert_eq!(validate(&account).is_ok(), ok, "{account:?}");
@@ -230,6 +253,9 @@ mod tests {
         let old = r#"{"accounts":[{"email":"a@qq.com","displayName":"","host":"imap.qq.com","port":993}]}"#;
         let file: ConfigFile = serde_json::from_str(old).unwrap();
         let a = &file.accounts[0];
-        assert_eq!((a.auth, a.use_proxy, a.provider.as_str()), (AuthKind::Password, false, ""));
+        assert_eq!(
+            (a.auth, a.use_proxy, a.provider.as_str()),
+            (AuthKind::Password, false, "")
+        );
     }
 }

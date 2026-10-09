@@ -5,10 +5,10 @@ mod imap_client;
 mod mail;
 mod net;
 mod oauth;
+mod remote;
 mod render;
 mod rules;
 mod secrets;
-mod remote;
 mod settings;
 mod sync;
 
@@ -44,7 +44,11 @@ struct AppState {
 
 impl AppState {
     fn proxy_for(&self, account: &AccountConfig) -> net::ProxyConfig {
-        if account.use_proxy { self.settings.proxy() } else { net::ProxyConfig::default() }
+        if account.use_proxy {
+            self.settings.proxy()
+        } else {
+            net::ProxyConfig::default()
+        }
     }
 
     /// 组装连接凭据：授权码从 keyring 读，OAuth 自动刷新 access token
@@ -52,12 +56,26 @@ impl AppState {
         let proxy = self.proxy_for(account);
         let auth = match account.auth.oauth_provider() {
             None => Auth::Password(accounts::get_password(&account.email)?),
-            Some(_) => Auth::OAuth(oauth::access_token(&account.email, &self.settings.get().oauth, &proxy)?),
+            Some(_) => Auth::OAuth(oauth::access_token(
+                &account.email,
+                &self.settings.get().oauth,
+                &proxy,
+            )?),
         };
-        Ok(Credentials { host: &account.host, port: account.port, username: &account.email, auth, proxy })
+        Ok(Credentials {
+            host: &account.host,
+            port: account.port,
+            username: &account.email,
+            auth,
+            proxy,
+        })
     }
 
-    fn with_session<T>(&self, email: &str, f: impl FnOnce(&Credentials) -> Result<T, String>) -> Result<T, String> {
+    fn with_session<T>(
+        &self,
+        email: &str,
+        f: impl FnOnce(&Credentials) -> Result<T, String>,
+    ) -> Result<T, String> {
         let account = self.store.get(email)?;
         f(&self.credentials(&account)?)
     }
@@ -85,8 +103,12 @@ impl AppState {
 }
 
 /// 在阻塞线程池里执行同步 IMAP / SQLite 调用，避免卡住 UI
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 fn app_state(app: &AppHandle) -> Arc<AppState> {
@@ -132,10 +154,17 @@ fn list_accounts(state: State<Arc<AppState>>) -> Result<Vec<AccountConfig>, Stri
 
 /// 用密码 / 授权码登录的账号：先验证能登录，再保存
 #[tauri::command]
-async fn save_password_account(app: AppHandle, account: AccountInput, is_new: bool) -> Result<AccountConfig, String> {
+async fn save_password_account(
+    app: AppHandle,
+    account: AccountInput,
+    is_new: bool,
+) -> Result<AccountConfig, String> {
     let state = app_state(&app);
     blocking(move || {
-        let existing = state.store.get(&accounts::normalize_email(&account.email)).ok();
+        let existing = state
+            .store
+            .get(&accounts::normalize_email(&account.email))
+            .ok();
         if is_new && existing.is_some() {
             return Err("这个邮箱已经添加过了".into());
         }
@@ -183,21 +212,32 @@ async fn oauth_login(
     let state = app_state(&app);
     let opener = app.clone();
     blocking(move || {
-        let proxy = if use_proxy { state.settings.proxy() } else { net::ProxyConfig::default() };
+        let proxy = if use_proxy {
+            state.settings.proxy()
+        } else {
+            net::ProxyConfig::default()
+        };
         let result = oauth::login(
             provider,
             &state.settings.get().oauth,
             &proxy,
             login_hint.as_deref(),
             &state.oauth_cancel,
-            |url| opener.opener().open_url(url, None::<&str>).map_err(|e| format!("无法打开浏览器: {e}")),
+            |url| {
+                opener
+                    .opener()
+                    .open_url(url, None::<&str>)
+                    .map_err(|e| format!("无法打开浏览器: {e}"))
+            },
         )?;
 
         let ep = provider.endpoints();
         let existing = state.store.get(&result.email).ok();
         let config = AccountConfig {
             email: result.email.clone(),
-            display_name: existing.as_ref().map_or(display_name.trim().to_string(), |a| a.display_name.clone()),
+            display_name: existing
+                .as_ref()
+                .map_or(display_name.trim().to_string(), |a| a.display_name.clone()),
             provider: match provider {
                 OAuthProvider::Google => "gmail".into(),
                 OAuthProvider::Microsoft => "outlook".into(),
@@ -225,17 +265,27 @@ async fn oauth_login(
 
 #[tauri::command]
 fn cancel_oauth(state: State<Arc<AppState>>) {
-    state.oauth_cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    state
+        .oauth_cancel
+        .store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
 #[tauri::command]
 async fn test_account(app: AppHandle, email: String) -> Result<(), String> {
     let state = app_state(&app);
-    blocking(move || state.with_session(&email, |c| imap_client::verify(c).map_err(|e| e.to_string()))).await
+    blocking(move || {
+        state.with_session(&email, |c| {
+            imap_client::verify(c).map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-fn reorder_accounts(state: State<Arc<AppState>>, order: Vec<String>) -> Result<Vec<AccountConfig>, String> {
+fn reorder_accounts(
+    state: State<Arc<AppState>>,
+    order: Vec<String>,
+) -> Result<Vec<AccountConfig>, String> {
     state.store.reorder(&order)
 }
 
@@ -280,7 +330,10 @@ fn save_settings(
         Some("") => secrets::delete(secrets::PROXY_PASSWORD_KEY)?,
         Some(p) => secrets::set(secrets::PROXY_PASSWORD_KEY, p)?,
     }
-    Ok(SettingsView { settings: saved, has_proxy_password: secrets::get(secrets::PROXY_PASSWORD_KEY)?.is_some() })
+    Ok(SettingsView {
+        settings: saved,
+        has_proxy_password: secrets::get(secrets::PROXY_PASSWORD_KEY)?.is_some(),
+    })
 }
 
 /// 用表单里尚未保存的代理配置，测试能否连到指定服务器
@@ -298,7 +351,10 @@ async fn test_proxy(
             None => secrets::get(secrets::PROXY_PASSWORD_KEY)?.unwrap_or_default(),
         };
         let start = std::time::Instant::now();
-        let (host, port) = target.rsplit_once(':').and_then(|(h, p)| Some((h, p.parse().ok()?))).unwrap_or((&target, 993));
+        let (host, port) = target
+            .rsplit_once(':')
+            .and_then(|(h, p)| Some((h, p.parse().ok()?)))
+            .unwrap_or((&target, 993));
         imap_client::open(host, port, &proxy).map_err(|e| e.to_string())?;
         Ok(start.elapsed().as_millis() as u64)
     })
@@ -331,7 +387,12 @@ async fn cache_stats(app: AppHandle) -> Result<CacheStats, String> {
             .into_iter()
             .map(|a| {
                 let (headers, bodies, body_bytes) = state.db.stats(&a.email)?;
-                Ok(AccountCache { email: a.email, headers, bodies, body_bytes })
+                Ok(AccountCache {
+                    email: a.email,
+                    headers,
+                    bodies,
+                    body_bytes,
+                })
             })
             .collect::<Result<_, String>>()?;
         let file_bytes = ["", "-wal", "-shm"]
@@ -342,7 +403,10 @@ async fn cache_stats(app: AppHandle) -> Result<CacheStats, String> {
                 std::fs::metadata(p).ok().map(|m| m.len())
             })
             .sum();
-        Ok(CacheStats { file_bytes, accounts })
+        Ok(CacheStats {
+            file_bytes,
+            accounts,
+        })
     })
     .await
 }
@@ -350,13 +414,25 @@ async fn cache_stats(app: AppHandle) -> Result<CacheStats, String> {
 #[tauri::command]
 async fn clear_cache(app: AppHandle, bodies_only: bool) -> Result<(), String> {
     let state = app_state(&app);
-    blocking(move || if bodies_only { state.db.clear_bodies() } else { state.db.clear_all() }).await
+    blocking(move || {
+        if bodies_only {
+            state.db.clear_bodies()
+        } else {
+            state.db.clear_all()
+        }
+    })
+    .await
 }
 
 // ---------- 邮件列表 ----------
 
 #[tauri::command]
-async fn list_cached(app: AppHandle, email: String, view: Option<i64>, limit: u32) -> Result<Vec<Envelope>, String> {
+async fn list_cached(
+    app: AppHandle,
+    email: String,
+    view: Option<i64>,
+    limit: u32,
+) -> Result<Vec<Envelope>, String> {
     let state = app_state(&app);
     blocking(move || {
         let v = match view {
@@ -374,7 +450,9 @@ async fn sync_inbox(app: AppHandle, email: String) -> Result<SyncStats, String> 
     let state = app_state(&app);
     blocking(move || {
         let window = state.settings.get().sync.window;
-        state.with_session(&email, |creds| sync::sync_folder(&state.db, creds, &email, INBOX, window))
+        state.with_session(&email, |creds| {
+            sync::sync_folder(&state.db, creds, &email, INBOX, window)
+        })
     })
     .await
 }
@@ -385,7 +463,9 @@ async fn prefetch_unread(app: AppHandle, email: String) -> Result<usize, String>
     let state = app_state(&app);
     blocking(move || {
         let uids = state.db.prefetch_candidates(&email, INBOX, 10)?;
-        if uids.is_empty() { return Ok(0); }
+        if uids.is_empty() {
+            return Ok(0);
+        }
         state.with_session(&email, |creds| {
             let mut s = imap_client::connect(creds).map_err(|e| e.to_string())?;
             let result = (|| {
@@ -393,9 +473,12 @@ async fn prefetch_unread(app: AppHandle, email: String) -> Result<usize, String>
                 let mut cached = 0;
                 for uid in uids {
                     // 打开邮件可能已经按需缓存了正文。
-                    if state.db.get_body(&email, INBOX, uid)?.is_some() { continue; }
+                    if state.db.get_body(&email, INBOX, uid)?.is_some() {
+                        continue;
+                    }
                     if let Some(raw) = imap_client::fetch_raw_bounded(&mut s, uid, 5 * 1024 * 1024)
-                        .map_err(|e| e.to_string())? {
+                        .map_err(|e| e.to_string())?
+                    {
                         state.db.put_body(&email, INBOX, uid, &raw)?;
                         cached += 1;
                     }
@@ -405,12 +488,17 @@ async fn prefetch_unread(app: AppHandle, email: String) -> Result<usize, String>
             s.logout().ok();
             result
         })
-    }).await
+    })
+    .await
 }
 
 /// 先同步服务器，再提交本地；失败时不把本地邮件错误显示为已读。
 #[tauri::command]
-async fn mark_all_read(app: AppHandle, email: String, view: Option<i64>) -> Result<Vec<u32>, String> {
+async fn mark_all_read(
+    app: AppHandle,
+    email: String,
+    view: Option<i64>,
+) -> Result<Vec<u32>, String> {
     let state = app_state(&app);
     blocking(move || {
         let view = match view {
@@ -419,7 +507,9 @@ async fn mark_all_read(app: AppHandle, email: String, view: Option<i64>) -> Resu
             Some(id) => View::Category(id),
         };
         let uids = state.db.unread_uids(&email, INBOX, view)?;
-        if uids.is_empty() { return Ok(uids); }
+        if uids.is_empty() {
+            return Ok(uids);
+        }
         state.with_session(&email, |creds| {
             let mut s = imap_client::connect(creds).map_err(|e| e.to_string())?;
             let result = (|| {
@@ -431,7 +521,8 @@ async fn mark_all_read(app: AppHandle, email: String, view: Option<i64>) -> Resu
         })?;
         state.db.set_seen_many(&email, INBOX, &uids, true)?;
         Ok(uids)
-    }).await
+    })
+    .await
 }
 
 // ---------- 分类与规则 ----------
@@ -443,7 +534,12 @@ fn list_categories(state: State<Arc<AppState>>, email: String) -> Result<Vec<Cat
 }
 
 #[tauri::command]
-async fn create_category(app: AppHandle, email: String, name: String, color: String) -> Result<Category, String> {
+async fn create_category(
+    app: AppHandle,
+    email: String,
+    name: String,
+    color: String,
+) -> Result<Category, String> {
     let state = app_state(&app);
     blocking(move || state.db.create_category(&email, &name, &color)).await
 }
@@ -457,7 +553,12 @@ async fn update_category(
     color: Option<String>,
 ) -> Result<(), String> {
     let state = app_state(&app);
-    blocking(move || state.db.update_category(&email, id, name.as_deref(), color.as_deref())).await
+    blocking(move || {
+        state
+            .db
+            .update_category(&email, id, name.as_deref(), color.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -467,13 +568,22 @@ async fn delete_category(app: AppHandle, email: String, id: i64) -> Result<bool,
 }
 
 #[tauri::command]
-fn reorder_categories(state: State<Arc<AppState>>, email: String, ids: Vec<i64>) -> Result<(), String> {
+fn reorder_categories(
+    state: State<Arc<AppState>>,
+    email: String,
+    ids: Vec<i64>,
+) -> Result<(), String> {
     state.db.reorder_categories(&email, &ids)
 }
 
 /// view: None 收件箱，Some(id) 移入分类，Some(-1) 移回收件箱
 #[tauri::command]
-async fn move_messages(app: AppHandle, email: String, uids: Vec<u32>, view: Option<i64>) -> Result<usize, String> {
+async fn move_messages(
+    app: AppHandle,
+    email: String,
+    uids: Vec<u32>,
+    view: Option<i64>,
+) -> Result<usize, String> {
     let state = app_state(&app);
     blocking(move || {
         let category = view.filter(|v| *v >= 0);
@@ -517,7 +627,13 @@ async fn add_rule(
     apply_existing: bool,
 ) -> Result<usize, String> {
     let state = app_state(&app);
-    blocking(move || state.db.add_rule(&email, &pattern, category_id, apply_existing).map(|(_, moved)| moved)).await
+    blocking(move || {
+        state
+            .db
+            .add_rule(&email, &pattern, category_id, apply_existing)
+            .map(|(_, moved)| moved)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -536,7 +652,13 @@ fn list_fonts() -> &'static [fonts::FontFamily] {
 /// 发件人是否在信任列表里（完整地址或 @域名）
 fn is_trusted(sender: &str, trusted: &[String]) -> bool {
     let sender = sender.to_lowercase();
-    trusted.iter().any(|t| if t.starts_with('@') { sender.ends_with(t.as_str()) } else { *t == sender })
+    trusted.iter().any(|t| {
+        if t.starts_with('@') {
+            sender.ends_with(t.as_str())
+        } else {
+            *t == sender
+        }
+    })
 }
 
 #[derive(Serialize)]
@@ -569,7 +691,12 @@ async fn get_message(
             || reading.remote_images == RemoteImages::Allow
             || is_trusted(&sender, &reading.trusted_senders);
         let raw = state.load_raw(&email, INBOX, uid)?;
-        let route = PartRoute { account: email, folder: INBOX.into(), uid, part: 0 };
+        let route = PartRoute {
+            account: email,
+            folder: INBOX.into(),
+            uid,
+            part: 0,
+        };
         let opts = render::RenderOptions {
             allow_remote: remote_allowed,
             app_dark,
@@ -578,7 +705,10 @@ async fn get_message(
             mail_family: &reading_fonts.mail_family,
             mail_font_size: reading_fonts.mail_font_size,
         };
-        Ok(MessageResponse { view: render::render(&raw, &route, &opts)?, remote_allowed })
+        Ok(MessageResponse {
+            view: render::render(&raw, &route, &opts)?,
+            remote_allowed,
+        })
     })
     .await
 }
@@ -609,7 +739,9 @@ fn write_attachment(state: &AppState, email: &str, uid: u32, part: u32) -> Resul
     let raw = state.load_raw(email, INBOX, uid)?;
     let (name, _, data) = render::extract_part(&raw, part).ok_or("附件不存在")?;
     std::fs::create_dir_all(&state.attachments_dir).map_err(|e| e.to_string())?;
-    let name = render::unique_filename(&render::sanitize_filename(&name), |n| state.attachments_dir.join(n).exists());
+    let name = render::unique_filename(&render::sanitize_filename(&name), |n| {
+        state.attachments_dir.join(n).exists()
+    });
     let path = state.attachments_dir.join(name);
     std::fs::write(&path, data).map_err(|e| e.to_string())?;
     Ok(path)
@@ -617,7 +749,12 @@ fn write_attachment(state: &AppState, email: &str, uid: u32, part: u32) -> Resul
 
 /// 保存附件并在资源管理器中定位
 #[tauri::command]
-async fn save_attachment(app: AppHandle, email: String, uid: u32, part: u32) -> Result<String, String> {
+async fn save_attachment(
+    app: AppHandle,
+    email: String,
+    uid: u32,
+    part: u32,
+) -> Result<String, String> {
     let state = app_state(&app);
     let path = blocking(move || write_attachment(&state, &email, uid, part)).await?;
     app.opener().reveal_item_in_dir(&path).ok();
@@ -625,10 +762,17 @@ async fn save_attachment(app: AppHandle, email: String, uid: u32, part: u32) -> 
 }
 
 #[tauri::command]
-async fn open_attachment(app: AppHandle, email: String, uid: u32, part: u32) -> Result<String, String> {
+async fn open_attachment(
+    app: AppHandle,
+    email: String,
+    uid: u32,
+    part: u32,
+) -> Result<String, String> {
     let state = app_state(&app);
     let path = blocking(move || write_attachment(&state, &email, uid, part)).await?;
-    app.opener().open_path(path.display().to_string(), None::<&str>).map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(path.display().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())?;
     Ok(path.display().to_string())
 }
 
@@ -638,7 +782,9 @@ fn open_external(app: AppHandle, url: String) -> Result<(), String> {
     if !is_http_url(&parsed) {
         return Err("只能打开 http(s) 链接".into());
     }
-    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 // ---------- mailbox:// 协议：给阅读 iframe 提供内联图片 ----------
@@ -675,19 +821,95 @@ fn serve_remote(state: &AppState, query: &str) -> Response<Vec<u8>> {
 }
 
 fn serve_part(state: &AppState, path: &str) -> Response<Vec<u8>> {
-    let not_found = || Response::builder().status(StatusCode::NOT_FOUND).body(vec![]).unwrap();
-    let Some(route) = render::parse_route(path) else { return not_found() };
+    let not_found = || {
+        Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(vec![])
+            .unwrap()
+    };
+    let Some(route) = render::parse_route(path) else {
+        return not_found();
+    };
     // 只读本地缓存，不触发网络请求（打开邮件时正文已缓存）
     let Ok(Some(raw)) = state.db.get_body(&route.account, &route.folder, route.uid) else {
         return not_found();
     };
-    let Some((_, mime, data)) = render::extract_part(&raw, route.part) else { return not_found() };
+    let Some((_, mime, data)) = render::extract_part(&raw, route.part) else {
+        return not_found();
+    };
     Response::builder()
         .header(header::CONTENT_TYPE, mime)
         .header(header::CACHE_CONTROL, "private, max-age=86400")
         .header("X-Content-Type-Options", "nosniff")
         .body(data)
         .unwrap()
+}
+
+#[tauri::command]
+fn get_total_unread(state: State<Arc<AppState>>) -> Result<u32, String> {
+    state.db.total_unread()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BadgeUpdateInput {
+    count: u32,
+    icon_rgba: Option<Vec<u8>>,
+    icon_size: Option<u32>,
+    overlay_rgba: Option<Vec<u8>>,
+    overlay_size: Option<u32>,
+}
+
+#[tauri::command]
+fn update_badge(app: AppHandle, badge: BadgeUpdateInput) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("找不到主窗口")?;
+
+    let count = badge.count;
+    let _ = window.set_badge_count(if count > 0 { Some(count as i64) } else { None });
+
+    #[cfg(target_os = "windows")]
+    {
+        if count > 0 {
+            if let (Some(rgba), Some(size)) = (badge.overlay_rgba, badge.overlay_size) {
+                let img = tauri::image::Image::new_owned(rgba, size, size);
+                let _ = window.set_overlay_icon(Some(img));
+            }
+            if let (Some(rgba), Some(size)) = (badge.icon_rgba, badge.icon_size) {
+                let img = tauri::image::Image::new_owned(rgba, size, size);
+                let _ = window.set_icon(img);
+            }
+        } else {
+            let _ = window.set_overlay_icon(None);
+            if let Some(orig) = app.default_window_icon() {
+                let _ = window.set_icon(orig.clone());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn migrate_legacy_data(app: &tauri::App) {
+    if let (Ok(cfg), Ok(data)) = (app.path().app_config_dir(), app.path().app_data_dir()) {
+        if !cfg.join("accounts.json").exists() {
+            if let Some(parent) = cfg.parent() {
+                let legacy = parent.join("com.mailbox.app");
+                if legacy.join("accounts.json").exists() {
+                    let _ = std::fs::create_dir_all(&cfg);
+                    let _ = std::fs::create_dir_all(&data);
+                    for item in ["accounts.json", "settings.json", "mail.db", "mail.db-wal", "mail.db-shm"] {
+                        let src = legacy.join(item);
+                        if src.exists() {
+                            let _ = std::fs::copy(&src, cfg.join(item));
+                            if data != cfg {
+                                let _ = std::fs::copy(&src, data.join(item));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn is_http_url(url: &tauri::Url) -> bool {
@@ -697,6 +919,7 @@ fn is_http_url(url: &tauri::Url) -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .register_asynchronous_uri_scheme_protocol(render::SCHEME, |ctx, request, responder| {
             let state = app_state(ctx.app_handle());
@@ -712,6 +935,7 @@ pub fn run() {
             });
         })
         .setup(|app| {
+            migrate_legacy_data(app);
             let config_dir = app.path().app_config_dir()?;
             let db_path = app.path().app_data_dir()?.join("mail.db");
             let state = AppState {
@@ -728,7 +952,13 @@ pub fn run() {
             // 主窗口在这里创建（tauri.conf.json 里 create=false），
             // 以便拦截邮件里的链接：新窗口请求一律交给系统浏览器
             let handle = app.handle().clone();
-            let window_config = app.config().app.windows.first().ok_or("缺少窗口配置")?.clone();
+            let window_config = app
+                .config()
+                .app
+                .windows
+                .first()
+                .ok_or("缺少窗口配置")?
+                .clone();
             WebviewWindowBuilder::from_config(app, &window_config)?
                 .on_new_window(move |url, _| {
                     if is_http_url(&url) {
@@ -771,6 +1001,8 @@ pub fn run() {
             save_attachment,
             open_attachment,
             open_external,
+            get_total_unread,
+            update_badge,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

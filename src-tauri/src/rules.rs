@@ -19,7 +19,10 @@ pub fn match_sender(rules: &[Rule], address: &str, name: &str) -> Option<i64> {
 fn matches(pattern: &str, addr: &str, name: &str) -> bool {
     if let Some(domain) = pattern.strip_prefix('@') {
         // 含子域名：x@sub.github.com 也算 @github.com
-        !domain.is_empty() && addr.rsplit_once('@').is_some_and(|(_, d)| d == domain || d.ends_with(&format!(".{domain}")))
+        !domain.is_empty()
+            && addr
+                .rsplit_once('@')
+                .is_some_and(|(_, d)| d == domain || d.ends_with(&format!(".{domain}")))
     } else if pattern.contains('@') {
         addr == pattern
     } else {
@@ -39,8 +42,10 @@ pub fn normalize_pattern(raw: &str) -> Option<String> {
     }
     if p.contains('@') {
         // 粗略校验邮箱
-        return (p.split_once('@').is_some_and(|(l, d)| !l.is_empty() && d.contains('.') && !d.starts_with('.') && !d.ends_with('.')))
-            .then_some(p);
+        return (p.split_once('@').is_some_and(|(l, d)| {
+            !l.is_empty() && d.contains('.') && !d.starts_with('.') && !d.ends_with('.')
+        }))
+        .then_some(p);
     }
     (p.chars().count() >= 2).then_some(p)
 }
@@ -60,7 +65,11 @@ mod tests {
     fn rules(list: &[(&str, i64)]) -> Vec<Rule> {
         list.iter()
             .enumerate()
-            .map(|(i, (pattern, category_id))| Rule { id: i as i64, pattern: pattern.to_string(), category_id: *category_id })
+            .map(|(i, (pattern, category_id))| Rule {
+                id: i as i64,
+                pattern: pattern.to_string(),
+                category_id: *category_id,
+            })
             .collect()
     }
 
