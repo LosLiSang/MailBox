@@ -71,15 +71,23 @@ impl OAuthProvider {
             Self::Google => (&apps.google_client_id, Some(&apps.google_client_secret)),
             Self::Microsoft => {
                 let configured = apps.microsoft_client_id.trim();
-                let id = if configured.is_empty() { MICROSOFT_CLIENT_ID } else { configured };
+                let id = if configured.is_empty() {
+                    MICROSOFT_CLIENT_ID
+                } else {
+                    configured
+                };
                 return Ok((id.to_string(), None));
-            },
+            }
         };
         if id.is_empty() || secret.is_some_and(|s| s.is_empty()) {
             return Err(format!(
                 "还没有配置 {} OAuth 应用。请先到「设置 → 高级」填写 Client ID{}",
                 self.name(),
-                if secret.is_some() { " 和 Client Secret" } else { "" }
+                if secret.is_some() {
+                    " 和 Client Secret"
+                } else {
+                    ""
+                }
             ));
         }
         Ok((id.clone(), secret.filter(|s| !s.is_empty()).cloned()))
@@ -105,7 +113,10 @@ fn random_token(bytes: usize) -> Result<String, String> {
 
 pub fn new_pkce() -> Result<Pkce, String> {
     let verifier = random_token(32)?;
-    Ok(Pkce { challenge: pkce_challenge(&verifier), verifier })
+    Ok(Pkce {
+        challenge: pkce_challenge(&verifier),
+        verifier,
+    })
 }
 
 pub fn authorize_url(
@@ -151,10 +162,18 @@ pub fn parse_callback(request_line: &str, expected_state: &str) -> Result<Callba
     if url.path() != "/" {
         return Ok(Callback::Ignore);
     }
-    let get = |key: &str| url.query_pairs().find(|(k, _)| k == key).map(|(_, v)| v.into_owned());
+    let get = |key: &str| {
+        url.query_pairs()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.into_owned())
+    };
     if let Some(err) = get("error") {
         let desc = get("error_description").unwrap_or_default();
-        return Ok(Callback::Denied(if desc.is_empty() { err } else { format!("{err}: {desc}") }));
+        return Ok(Callback::Denied(if desc.is_empty() {
+            err
+        } else {
+            format!("{err}: {desc}")
+        }));
     }
     match (get("code"), get("state")) {
         (Some(code), Some(state)) if state == expected_state => Ok(Callback::Code(code)),
@@ -217,7 +236,10 @@ pub fn merge_token(
         let expired = err == "invalid_grant";
         let desc = resp.error_description.unwrap_or_default();
         return Err(if expired {
-            format!("{} 登录已过期或被撤销，请在「设置 → 账号」中重新登录。({desc})", provider.name())
+            format!(
+                "{} 登录已过期或被撤销，请在「设置 → 账号」中重新登录。({desc})",
+                provider.name()
+            )
         } else {
             format!("{} 授权失败: {err} {desc}", provider.name())
         });
@@ -236,7 +258,10 @@ pub fn merge_token(
 }
 
 pub fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 // ---------- 网络 ----------
@@ -277,7 +302,11 @@ fn respond(mut stream: TcpStream, status: &str, body: &str) {
 }
 
 /// 等待浏览器回调，返回授权码。同时监听 IPv4 和 IPv6，避免 localhost 解析到 ::1 时连不上
-fn wait_for_code(listeners: &[TcpListener], state: &str, cancel: &AtomicBool) -> Result<String, String> {
+fn wait_for_code(
+    listeners: &[TcpListener],
+    state: &str,
+    cancel: &AtomicBool,
+) -> Result<String, String> {
     let deadline = Instant::now() + LOGIN_TIMEOUT;
     loop {
         if cancel.load(Ordering::SeqCst) {
@@ -287,7 +316,9 @@ fn wait_for_code(listeners: &[TcpListener], state: &str, cancel: &AtomicBool) ->
             return Err("等待浏览器登录超时（5 分钟），请重试".into());
         }
         for listener in listeners {
-            let Ok((stream, _)) = listener.accept() else { continue };
+            let Ok((stream, _)) = listener.accept() else {
+                continue;
+            };
             stream.set_nonblocking(false).ok();
             stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
             let mut line = String::new();
@@ -346,7 +377,14 @@ pub fn login(
     let state = random_token(16)?;
     cancel.store(false, Ordering::SeqCst);
 
-    open_browser(&authorize_url(&ep, &client_id, &redirect_uri, &state, &pkce.challenge, login_hint))?;
+    open_browser(&authorize_url(
+        &ep,
+        &client_id,
+        &redirect_uri,
+        &state,
+        &pkce.challenge,
+        login_hint,
+    ))?;
     let code = wait_for_code(&listeners, &state, cancel)?;
 
     let agent = net::http_agent(proxy)?;
@@ -375,14 +413,22 @@ pub fn login(
 }
 
 pub fn save_token(email: &str, token: &StoredToken) -> Result<(), String> {
-    secrets::set(&secrets::oauth_token_key(email), &serde_json::to_string(token).map_err(|e| e.to_string())?)
+    secrets::set(
+        &secrets::oauth_token_key(email),
+        &serde_json::to_string(token).map_err(|e| e.to_string())?,
+    )
 }
 
 /// 取可用的 access token，必要时自动刷新并保存
-pub fn access_token(email: &str, apps: &OAuthApps, proxy: &net::ProxyConfig) -> Result<String, String> {
+pub fn access_token(
+    email: &str,
+    apps: &OAuthApps,
+    proxy: &net::ProxyConfig,
+) -> Result<String, String> {
     let stored = secrets::get(&secrets::oauth_token_key(email))?
         .ok_or("找不到登录凭据，请在「设置 → 账号」中重新登录")?;
-    let token: StoredToken = serde_json::from_str(&stored).map_err(|_| "登录凭据已损坏，请重新登录")?;
+    let token: StoredToken =
+        serde_json::from_str(&stored).map_err(|_| "登录凭据已损坏，请重新登录")?;
     if token.is_fresh(now_secs()) {
         return Ok(token.access_token);
     }
@@ -425,7 +471,14 @@ mod tests {
     #[test]
     fn builds_authorize_url() {
         let ep = OAuthProvider::Microsoft.endpoints();
-        let url = authorize_url(&ep, "cid", "http://localhost:5000/", "st", "ch", Some("a@outlook.com"));
+        let url = authorize_url(
+            &ep,
+            "cid",
+            "http://localhost:5000/",
+            "st",
+            "ch",
+            Some("a@outlook.com"),
+        );
         let parsed = Url::parse(&url).unwrap();
         let q: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
         assert!(url.starts_with(ep.auth_url));
@@ -444,9 +497,18 @@ mod tests {
     #[test]
     fn parses_callbacks() {
         let cases = [
-            ("GET /?code=abc&state=S HTTP/1.1", Ok(Callback::Code("abc".into()))),
-            ("GET /?state=S&code=a%2Fb&scope=x HTTP/1.1", Ok(Callback::Code("a/b".into()))),
-            ("GET /?error=access_denied&state=S HTTP/1.1", Ok(Callback::Denied("access_denied".into()))),
+            (
+                "GET /?code=abc&state=S HTTP/1.1",
+                Ok(Callback::Code("abc".into())),
+            ),
+            (
+                "GET /?state=S&code=a%2Fb&scope=x HTTP/1.1",
+                Ok(Callback::Code("a/b".into())),
+            ),
+            (
+                "GET /?error=access_denied&state=S HTTP/1.1",
+                Ok(Callback::Denied("access_denied".into())),
+            ),
             (
                 "GET /?error=x&error_description=no+consent HTTP/1.1",
                 Ok(Callback::Denied("x: no consent".into())),
@@ -466,7 +528,10 @@ mod tests {
 
     #[test]
     fn builds_xoauth2_payload() {
-        assert_eq!(xoauth2_payload("a@gmail.com", "tok"), "user=a@gmail.com\x01auth=Bearer tok\x01\x01");
+        assert_eq!(
+            xoauth2_payload("a@gmail.com", "tok"),
+            "user=a@gmail.com\x01auth=Bearer tok\x01\x01"
+        );
     }
 
     #[test]
@@ -474,8 +539,14 @@ mod tests {
         let jwt = |claims: &str| format!("h.{}.sig", URL_SAFE_NO_PAD.encode(claims));
         let cases = [
             (jwt(r#"{"email":"A@Gmail.com"}"#), Some("a@gmail.com")),
-            (jwt(r#"{"preferred_username":"b@outlook.com","name":"B"}"#), Some("b@outlook.com")),
-            (jwt(r#"{"email":"not-an-email","upn":"c@corp.com"}"#), Some("c@corp.com")),
+            (
+                jwt(r#"{"preferred_username":"b@outlook.com","name":"B"}"#),
+                Some("b@outlook.com"),
+            ),
+            (
+                jwt(r#"{"email":"not-an-email","upn":"c@corp.com"}"#),
+                Some("c@corp.com"),
+            ),
             (jwt(r#"{"sub":"123"}"#), None),
             ("garbage".to_string(), None),
             ("a.!!!.c".to_string(), None),
@@ -492,14 +563,39 @@ mod tests {
     #[test]
     fn merges_tokens() {
         let p = OAuthProvider::Google;
-        let t = merge_token(p, resp(r#"{"access_token":"A","refresh_token":"R","expires_in":3599}"#), None, 1000).unwrap();
-        assert_eq!(t, StoredToken { provider: p, access_token: "A".into(), refresh_token: "R".into(), expires_at: 4599 });
+        let t = merge_token(
+            p,
+            resp(r#"{"access_token":"A","refresh_token":"R","expires_in":3599}"#),
+            None,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(
+            t,
+            StoredToken {
+                provider: p,
+                access_token: "A".into(),
+                refresh_token: "R".into(),
+                expires_at: 4599
+            }
+        );
 
         // 刷新时没有返回新的 refresh token，沿用旧的
-        let t = merge_token(p, resp(r#"{"access_token":"A2","expires_in":60}"#), Some("R"), 0).unwrap();
+        let t = merge_token(
+            p,
+            resp(r#"{"access_token":"A2","expires_in":60}"#),
+            Some("R"),
+            0,
+        )
+        .unwrap();
         assert_eq!((t.refresh_token.as_str(), t.expires_at), ("R", 60));
 
-        let err = merge_token(p, resp(r#"{"error":"invalid_grant","error_description":"expired"}"#), Some("R"), 0);
+        let err = merge_token(
+            p,
+            resp(r#"{"error":"invalid_grant","error_description":"expired"}"#),
+            Some("R"),
+            0,
+        );
         assert!(err.unwrap_err().contains("重新登录"));
 
         let err = merge_token(p, resp(r#"{"access_token":"A"}"#), None, 0);
@@ -522,7 +618,10 @@ mod tests {
     #[test]
     fn requires_client_config() {
         let mut apps = OAuthApps::default();
-        assert!(OAuthProvider::Google.client(&apps).unwrap_err().contains("Client Secret"));
+        assert!(OAuthProvider::Google
+            .client(&apps)
+            .unwrap_err()
+            .contains("Client Secret"));
         // 新安装和旧设置的空 ID 都使用项目注册；显式配置仍优先。
         for configured in ["", "   ", " m "] {
             apps.microsoft_client_id = configured.into();
@@ -531,15 +630,24 @@ mod tests {
             } else {
                 "m"
             };
-            assert_eq!(OAuthProvider::Microsoft.client(&apps).unwrap(), (expected.into(), None));
+            assert_eq!(
+                OAuthProvider::Microsoft.client(&apps).unwrap(),
+                (expected.into(), None)
+            );
         }
 
         apps.google_client_id = "g".into();
         assert!(OAuthProvider::Google.client(&apps).is_err());
         apps.google_client_secret = "s".into();
-        assert_eq!(OAuthProvider::Google.client(&apps).unwrap(), ("g".into(), Some("s".into())));
+        assert_eq!(
+            OAuthProvider::Google.client(&apps).unwrap(),
+            ("g".into(), Some("s".into()))
+        );
 
         apps.microsoft_client_id = "m".into();
-        assert_eq!(OAuthProvider::Microsoft.client(&apps).unwrap(), ("m".into(), None));
+        assert_eq!(
+            OAuthProvider::Microsoft.client(&apps).unwrap(),
+            ("m".into(), None)
+        );
     }
 }

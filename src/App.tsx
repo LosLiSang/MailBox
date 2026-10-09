@@ -2,12 +2,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Account, type Category, type EmailDarkMode, type Envelope, type SettingsView } from "./api";
 import { AccountDialog } from "./components/AccountDialog";
 import { Avatar } from "./components/Avatar";
+import { Icon } from "./components/Icon";
 import { MailList } from "./components/MailList";
 import { Reader } from "./components/Reader";
 import { SettingsPage, type SettingsTab } from "./components/SettingsPage";
 import { syncSummary } from "./format";
+import { updateAppBadge } from "./badge";
+import { sendNewMailNotification } from "./notification";
 import { providerById } from "./providers";
 import { useEffectiveDark } from "./theme";
+import {
+  clampListWidth,
+  LIST_DEFAULT_WIDTH,
+  SIDEBAR_COLLAPSED_WIDTH,
+  SIDEBAR_WIDTH,
+  usePersistentState,
+} from "./layout";
 import "./App.css";
 
 type Inbox = {
@@ -39,6 +49,61 @@ export default function App() {
   const pendingSeen = useRef(new Map<string, number>());
   const [markingAccounts, setMarkingAccounts] = useState<string[]>([]);
   const activeViews = useRef<Record<string, number | null>>({});
+  const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState("sidebarCollapsed", false);
+  const [categoriesOpen, setCategoriesOpen] = usePersistentState("categoriesOpen", true);
+  const [listWidth, setListWidth] = usePersistentState("listWidth", LIST_DEFAULT_WIDTH);
+  const [resizing, setResizing] = useState(false);
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  const sidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH;
+  const effectiveListWidth = clampListWidth(listWidth, windowWidth, sidebarWidth);
+
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Ctrl/Cmd + Shift + S 切换侧栏
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        setSidebarCollapsed((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setSidebarCollapsed]);
+
+  /** 拖动邮件列表右边缘调整宽度 */
+  function startResize(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startWidth = effectiveListWidth;
+    setResizing(true);
+    const onMove = (ev: PointerEvent) =>
+      setListWidth(clampListWidth(startWidth + ev.clientX - startX, window.innerWidth, sidebarWidth));
+    const onUp = () => {
+      setResizing(false);
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  }
+
+  /** 键盘调整：左右方向键，按住 Shift 步长更大 */
+  function resizeByKey(e: React.KeyboardEvent) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const step = (e.shiftKey ? 64 : 16) * (e.key === "ArrowLeft" ? -1 : 1);
+    setListWidth(clampListWidth(effectiveListWidth + step, window.innerWidth, sidebarWidth));
+  }
 
   const current = accounts?.find((a) => a.email === selected) ?? null;
   const inbox = (selected && inboxes[selected]) || EMPTY_INBOX;
@@ -53,6 +118,15 @@ export default function App() {
     setNotice(text);
     window.clearTimeout(noticeTimer.current);
     noticeTimer.current = window.setTimeout(() => setNotice(null), 4000);
+  }, []);
+
+  const refreshBadge = useCallback(async () => {
+    try {
+      const total = await api.getTotalUnread();
+      await updateAppBadge(total);
+    } catch (err) {
+      console.warn("获取未读数失败:", err);
+    }
   }, []);
 
   const loadCached = useCallback(
@@ -78,6 +152,15 @@ export default function App() {
         await loadCached(email, activeViews.current[email] ?? null);
         patch(email, { syncing: false });
         if (announce || stats.added > 0) showNotice(syncSummary(stats));
+        if (stats.added > 0) {
+          if (settings?.sync.desktopNotifications ?? true) {
+            const recent = await api.listCached(email, null, 1).catch(() => []);
+            const first = recent[0];
+            const acc = accounts?.find((a) => a.email === email);
+            void sendNewMailNotification(acc?.displayName || email, stats.added, first);
+          }
+        }
+        void refreshBadge();
         if (!prefetching.current.has(email)) {
           prefetching.current.add(email);
           void api.prefetchUnread(email)
@@ -109,8 +192,9 @@ export default function App() {
       setAccounts(list);
       if (list.length > 0) setSelected(list[0].email);
       else setDialog({ open: true, editing: null });
+      void refreshBadge();
     });
-  }, []);
+  }, [refreshBadge]);
 
   const appDark = useEffectiveDark(settings?.appearance.theme ?? "system");
   // 只包含影响正文渲染的设置，变化时重新加载阅读区
@@ -185,6 +269,7 @@ export default function App() {
     updateSeen(email, mail.uid, seen);
     try {
       await api.setSeen(email, mail.uid, seen);
+      void refreshBadge();
     } catch (err) {
       updateSeen(email, mail.uid, !seen);
       showNotice(`同步已读状态失败: ${err}`);
@@ -216,6 +301,7 @@ export default function App() {
         ) } };
       });
       showNotice(count > 0 ? `已将 ${count} 封邮件标为已读` : "当前视图没有未读邮件");
+      void refreshBadge();
     } catch (err) {
       showNotice(`全部已读失败，请重新同步后重试: ${err}`);
     } finally {
@@ -243,6 +329,7 @@ export default function App() {
     try {
       await api.moveMessages(email, [mail.uid], view);
       refreshCategories(email);
+      void refreshBadge();
     } catch (err) {
       showNotice(`移动失败: ${err}`);
       loadCached(email, inbox.view);
@@ -310,15 +397,34 @@ export default function App() {
   function onCacheCleared() {
     setInboxes({});
     setOpenUid(null);
+    void refreshBadge();
   }
 
   const unread = inbox.mails?.filter((m) => !m.seen).length ?? 0;
 
   return (
-    <div className="layout">
+    <div
+      className={`layout ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${resizing ? "resizing" : ""}`}
+      style={{ gridTemplateColumns: `${sidebarWidth}px ${effectiveListWidth}px minmax(0, 1fr)` }}
+    >
       <aside className="sidebar">
-        <div className="brand">📬 MailBox</div>
+        <div className="brand">
+          <span className="brand-mark">
+            <Icon name="mail" size={14} />
+          </span>
+          <span className="brand-name">MailBox</span>
+          <button
+            className="sidebar-toggle"
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            title={sidebarCollapsed ? "展开侧栏（Ctrl+Shift+S）" : "收起侧栏（Ctrl+Shift+S）"}
+            aria-label={sidebarCollapsed ? "展开侧栏" : "收起侧栏"}
+            aria-expanded={!sidebarCollapsed}
+          >
+            <Icon name="sidebar" size={17} />
+          </button>
+        </div>
 
+        <div className="sidebar-label">账户</div>
         <nav className="accounts">
           {accounts?.map((a) => {
             const count = inboxes[a.email]?.mails?.filter((m) => !m.seen).length ?? 0;
@@ -331,9 +437,9 @@ export default function App() {
                   setSelected(a.email);
                   setSettingsTab(null);
                 }}
-                title={`${a.email} · ${providerById(a.provider).name}`}
+                title={`${a.displayName || a.email}\n${a.email} · ${providerById(a.provider).name}`}
               >
-                <Avatar name={a.displayName || a.email} seed={a.email} size={28} />
+                <Avatar name={a.displayName || a.email} seed={a.email} size={26} />
                 <span className="account-text">
                   <span className="account-name">{a.displayName || a.email.split("@")[0]}</span>
                   <span className="account-email">{a.email}</span>
@@ -352,38 +458,80 @@ export default function App() {
 
         {current && (
           <nav className="views">
+            <div className="sidebar-label">邮箱</div>
             <button
               className={`view-item ${inbox.view === null ? "active" : ""}`}
               onClick={() => switchView(null)}
+              title="收件箱"
             >
-              📥 收件箱
+              <Icon name="inbox" className="view-icon" />
+              <span className="view-name">收件箱</span>
             </button>
-            {categories.map((c) => (
-              <button
-                key={c.id}
-                className={`view-item ${inbox.view === c.id ? "active" : ""}`}
-                onClick={() => switchView(c.id)}
-              >
-                <span className="view-dot" style={{ background: c.color }} />
-                {c.name}
-                <span className="view-count">{c.count}</span>
-              </button>
-            ))}
-            <button className={`view-item ${inbox.view === -1 ? "active" : ""}`} onClick={() => switchView(-1)}>
-              🗂 全部邮件
+            <button
+              className={`view-item ${inbox.view === -1 ? "active" : ""}`}
+              onClick={() => switchView(-1)}
+              title="全部邮件"
+            >
+              <Icon name="tray" className="view-icon" />
+              <span className="view-name">全部邮件</span>
             </button>
+
+            {categories.length > 0 && (
+              <>
+                <button
+                  className="sidebar-label section-toggle"
+                  onClick={() => setCategoriesOpen(!categoriesOpen)}
+                  aria-expanded={categoriesOpen}
+                  title={categoriesOpen ? "折叠分类" : "展开分类"}
+                >
+                  <span>分类</span>
+                  <Icon name="chevronRight" size={11} className={`section-chevron ${categoriesOpen ? "open" : ""}`} />
+                </button>
+                <div className={`view-group ${categoriesOpen ? "open" : ""}`}>
+                  <div className="view-group-inner">
+                    {categories.map((c) => (
+                      <button
+                        key={c.id}
+                        className={`view-item ${inbox.view === c.id ? "active" : ""}`}
+                        onClick={() => switchView(c.id)}
+                        title={`${c.name} · ${c.count} 封`}
+                        tabIndex={categoriesOpen ? undefined : -1}
+                      >
+                        <span className="view-dot" style={{ background: c.color }} />
+                        <span className="view-name">{c.name}</span>
+                        <span className="view-count">{c.count}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* 折叠时仍显示当前所在的分类，避免看不出自己在哪 */}
+                {!categoriesOpen &&
+                  categories
+                    .filter((c) => c.id === inbox.view)
+                    .map((c) => (
+                      <button key={c.id} className="view-item active" title={c.name}>
+                        <span className="view-dot" style={{ background: c.color }} />
+                        <span className="view-name">{c.name}</span>
+                        <span className="view-count">{c.count}</span>
+                      </button>
+                    ))}
+              </>
+            )}
           </nav>
         )}
 
         <div className="sidebar-footer">
-          <button className="add-account" onClick={() => setDialog({ open: true, editing: null })}>
-            ＋ 添加账号
+          <button className="add-account" onClick={() => setDialog({ open: true, editing: null })} title="添加账号">
+            <Icon name="plus" />
+            <span className="view-name">添加账号</span>
           </button>
           <button
             className={`sidebar-settings ${settingsTab ? "active" : ""}`}
             onClick={() => setSettingsTab(settingsTab ? null : "accounts")}
+            title="设置"
           >
-            ⚙ 设置
+            <Icon name="gear" />
+            <span className="view-name">设置</span>
           </button>
         </div>
       </aside>
@@ -411,6 +559,18 @@ export default function App() {
       ) : current ? (
         <>
           <section className="list-pane">
+            <div
+              className="pane-resizer"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="调整邮件列表宽度"
+              aria-valuenow={effectiveListWidth}
+              tabIndex={0}
+              title="拖动调整宽度，双击恢复默认"
+              onPointerDown={startResize}
+              onDoubleClick={() => setListWidth(LIST_DEFAULT_WIDTH)}
+              onKeyDown={resizeByKey}
+            />
             <header className="toolbar">
               <div className="toolbar-text">
                 <h1>
@@ -430,34 +590,42 @@ export default function App() {
               </div>
               <div className="toolbar-actions">
                 <button
-                  className="ghost"
+                  className="ghost icon"
                   onClick={markAllRead}
                   disabled={inbox.mails === null || inbox.syncing || markingAccounts.includes(current.email)}
-                  title="将当前视图中所有已缓存的未读邮件标为已读（包括未显示的邮件）"
+                  title={
+                    markingAccounts.includes(current.email)
+                      ? "标记中…"
+                      : "全部已读：将当前视图中所有已缓存的未读邮件标为已读（包括未显示的邮件）"
+                  }
+                  aria-label="全部已读"
                 >
-                  {markingAccounts.includes(current.email) ? "标记中…" : "全部已读"}
+                  <Icon name="checkAll" size={18} className={markingAccounts.includes(current.email) ? "pulse" : ""} />
                 </button>
                 <button
                   className="ghost icon"
                   onClick={() => sync(current.email, { announce: true })}
                   disabled={inbox.syncing || markingAccounts.includes(current.email)}
                   title="同步"
+                  aria-label="同步"
                 >
-                  <span className={inbox.syncing ? "spin" : ""}>⟳</span>
+                  <Icon name="refresh" size={17} className={inbox.syncing ? "spin" : ""} />
                 </button>
                 <button
                   className="ghost icon"
                   onClick={() => setDialog({ open: true, editing: current })}
                   title="账号设置"
+                  aria-label="账号设置"
                 >
-                  ✎
+                  <Icon name="compose" size={17} />
                 </button>
               </div>
             </header>
 
             {inbox.error && (
               <div className="sync-error" title={inbox.error}>
-                ⚠️ 同步失败，显示的是本地缓存：{inbox.error}
+                <Icon name="warning" size={14} />
+                同步失败，显示的是本地缓存：{inbox.error}
               </div>
             )}
 
@@ -476,7 +644,10 @@ export default function App() {
               ) : inbox.syncing ? (
                 <Skeleton />
               ) : (
-                <div className="placeholder">收件箱是空的</div>
+                <div className="placeholder">
+                  <Icon name="inbox" size={40} className="placeholder-icon" />
+                  <span>没有邮件</span>
+                </div>
               )}
             </div>
           </section>
@@ -497,7 +668,10 @@ export default function App() {
                 onMove={(view) => openMail && moveMail(openMail, view)}
               />
             ) : (
-              <div className="placeholder">选择一封邮件阅读</div>
+              <div className="placeholder">
+                <Icon name="envelope" size={44} className="placeholder-icon" />
+                <span>未选择邮件</span>
+              </div>
             )}
           </section>
         </>
@@ -505,6 +679,9 @@ export default function App() {
         accounts && (
           <main className="welcome-pane">
             <div className="placeholder welcome">
+              <span className="welcome-mark">
+                <Icon name="mail" size={36} />
+              </span>
               <h2>欢迎使用 MailBox</h2>
               <p>添加一个邮箱账号开始使用</p>
               <button className="primary" onClick={() => setDialog({ open: true, editing: null })}>

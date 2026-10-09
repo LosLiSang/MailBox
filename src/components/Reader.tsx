@@ -3,6 +3,7 @@ import { api, type Category, type EmailDarkMode, type Envelope, type MessageView
 import { domainOf, formatFullDate, formatSize } from "../format";
 import { frameBackground } from "../theme";
 import { Avatar } from "./Avatar";
+import { Icon } from "./Icon";
 
 type Props = {
   email: string;
@@ -67,7 +68,10 @@ export function Reader(props: Props) {
   if (state.status === "loading") {
     return (
       <div className="reader">
-        <div className="placeholder">正在加载邮件…</div>
+        <div className="placeholder">
+          <Icon name="refresh" size={22} className="spin" />
+          正在加载邮件…
+        </div>
       </div>
     );
   }
@@ -99,7 +103,7 @@ export function Reader(props: Props) {
           <div className="reader-title-actions">
             {categories.length > 0 && (
               <select
-                className="ghost small move-select"
+                className="move-select"
                 value=""
                 title="移动到分类"
                 onChange={(e) => {
@@ -128,10 +132,12 @@ export function Reader(props: Props) {
                     : "之后所有邮件都用深色显示（可在设置中改回智能）"
                 }
               >
-                {bodyIsDark ? "☀ 原样" : "🌙 深色"}
+                <Icon name={bodyIsDark ? "sun" : "moon"} size={14} />
+                {bodyIsDark ? "原样" : "深色"}
               </button>
             )}
             <button className="ghost small" onClick={() => onToggleSeen(mail)}>
+              <Icon name={mail.seen ? "envelope" : "envelopeOpen"} size={14} />
               {mail.seen ? "标为未读" : "标为已读"}
             </button>
           </div>
@@ -149,7 +155,10 @@ export function Reader(props: Props) {
 
       {view.hasRemoteContent && !view.remoteAllowed && (
         <div className="remote-banner">
-          <span>🛡️ 已阻止远程图片，防止发件人追踪你是否打开了邮件</span>
+          <span className="remote-banner-text">
+            <Icon name="shield" size={15} />
+            已阻止远程图片，防止发件人追踪你是否打开了邮件
+          </span>
           <span className="banner-actions">
             <button className="ghost small" onClick={() => setAllowRemote(true)}>
               显示图片
@@ -173,7 +182,8 @@ export function Reader(props: Props) {
           {view.attachments.map((a) => (
             <li key={a.part} title={a.mime}>
               <button className="attachment-name" onClick={() => attachmentAction(a.part, "open")}>
-                📎 {a.name}
+                <Icon name="paperclip" size={14} />
+                <span>{a.name}</span>
               </button>
               <span className="muted">{formatSize(a.size)}</span>
               <button className="link" onClick={() => attachmentAction(a.part, "save")}>

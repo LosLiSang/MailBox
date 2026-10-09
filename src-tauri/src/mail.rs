@@ -27,7 +27,9 @@ pub fn parse_envelope(uid: u32, header: &[u8], seen: bool) -> Envelope {
             (
                 m.subject().unwrap_or_default().to_string(),
                 from.and_then(|a| a.name()).unwrap_or_default().to_string(),
-                from.and_then(|a| a.address()).unwrap_or_default().to_string(),
+                from.and_then(|a| a.address())
+                    .unwrap_or_default()
+                    .to_string(),
                 m.date().map(|d| d.to_rfc3339()),
             )
         }
@@ -36,7 +38,11 @@ pub fn parse_envelope(uid: u32, header: &[u8], seen: bool) -> Envelope {
 
     Envelope {
         uid,
-        subject: if subject.is_empty() { "(无主题)".into() } else { subject },
+        subject: if subject.is_empty() {
+            "(无主题)".into()
+        } else {
+            subject
+        },
         from_name,
         from_address,
         date,
@@ -92,7 +98,12 @@ mod tests {
 
         for (raw, subject, name, addr) in cases {
             let env = parse_envelope(1, raw, false);
-            assert_eq!(env.subject, *subject, "subject for {:?}", String::from_utf8_lossy(raw));
+            assert_eq!(
+                env.subject,
+                *subject,
+                "subject for {:?}",
+                String::from_utf8_lossy(raw)
+            );
             assert_eq!(env.from_name, *name);
             assert_eq!(env.from_address, *addr);
         }
@@ -116,7 +127,11 @@ mod tests {
             (10, 0, None),
         ];
         for (exists, limit, want) in cases {
-            assert_eq!(recent_range(exists, limit).as_deref(), want, "{exists},{limit}");
+            assert_eq!(
+                recent_range(exists, limit).as_deref(),
+                want,
+                "{exists},{limit}"
+            );
         }
     }
 }

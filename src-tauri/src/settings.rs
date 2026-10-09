@@ -18,11 +18,17 @@ pub struct SyncSettings {
     pub window: u32,
     /// 自动同步间隔（分钟），0 表示关闭
     pub auto_sync_minutes: u32,
+    /// 收到新邮件时是否发送桌面通知
+    pub desktop_notifications: bool,
 }
 
 impl Default for SyncSettings {
     fn default() -> Self {
-        Self { window: 200, auto_sync_minutes: 5 }
+        Self {
+            window: 200,
+            auto_sync_minutes: 5,
+            desktop_notifications: true,
+        }
     }
 }
 
@@ -76,7 +82,12 @@ pub struct FontSettings {
 
 impl Default for FontSettings {
     fn default() -> Self {
-        Self { ui_family: String::new(), ui_scale: 100, mail_family: String::new(), mail_font_size: 0 }
+        Self {
+            ui_family: String::new(),
+            ui_scale: 100,
+            mail_family: String::new(),
+            mail_font_size: 0,
+        }
     }
 }
 
@@ -153,9 +164,15 @@ pub fn normalize(mut s: Settings) -> Result<Settings, String> {
     f.mail_family = f.mail_family.trim().to_string();
     // 字号缩放选一个 5 的倍数或 UI_SCALE_MIN，与设置页的选项对应
     f.ui_scale = f.ui_scale.clamp(UI_SCALE_MIN, UI_SCALE_MAX);
-    f.mail_font_size = f.mail_font_size.clamp(MAIL_FONT_SIZE_MIN, MAIL_FONT_SIZE_MAX);
+    f.mail_font_size = f
+        .mail_font_size
+        .clamp(MAIL_FONT_SIZE_MIN, MAIL_FONT_SIZE_MAX);
 
-    for v in [&mut s.oauth.google_client_id, &mut s.oauth.google_client_secret, &mut s.oauth.microsoft_client_id] {
+    for v in [
+        &mut s.oauth.google_client_id,
+        &mut s.oauth.google_client_secret,
+        &mut s.oauth.microsoft_client_id,
+    ] {
         *v = v.trim().to_string();
     }
     Ok(s)
@@ -175,7 +192,10 @@ impl SettingsStore {
             .and_then(|t| serde_json::from_str::<Settings>(&t).ok())
             .and_then(|s| normalize(s).ok())
             .unwrap_or_else(|| normalize(Settings::default()).unwrap());
-        Self { path, current: RwLock::new(current) }
+        Self {
+            path,
+            current: RwLock::new(current),
+        }
     }
 
     pub fn get(&self) -> Settings {
@@ -224,6 +244,7 @@ mod tests {
         let partial: Settings = serde_json::from_str(r#"{"sync":{"window":500}}"#).unwrap();
         assert_eq!(partial.sync.window, 500);
         assert_eq!(partial.sync.auto_sync_minutes, 5);
+        assert!(partial.sync.desktop_notifications);
         assert_eq!(partial.reading.remote_images, RemoteImages::Allow);
         assert_eq!(partial.reading.email_dark_mode, DarkPreference::Auto);
         assert!(partial.reading.images_via_proxy);
@@ -234,11 +255,21 @@ mod tests {
     #[test]
     fn normalizes_values() {
         let mut s = Settings::default();
-        s.reading.trusted_senders = vec![" A@QQ.com ".into(), "a@qq.com".into(), "".into(), "@github.com".into()];
+        s.reading.trusted_senders = vec![
+            " A@QQ.com ".into(),
+            "a@qq.com".into(),
+            "".into(),
+            "@github.com".into(),
+        ];
         s.appearance.theme = "purple".into();
         s.appearance.density = "".into();
         s.sync.auto_sync_minutes = 99999;
-        s.proxy = ProxyConfig { kind: ProxyKind::Socks5, host: " 127.0.0.1 ".into(), port: 7890, ..Default::default() };
+        s.proxy = ProxyConfig {
+            kind: ProxyKind::Socks5,
+            host: " 127.0.0.1 ".into(),
+            port: 7890,
+            ..Default::default()
+        };
 
         let s = normalize(s).unwrap();
         assert_eq!(s.reading.trusted_senders, ["@github.com", "a@qq.com"]);
@@ -252,7 +283,13 @@ mod tests {
         s.appearance.fonts.ui_scale = 500;
         s.appearance.fonts.mail_font_size = 99;
         let s = normalize(s).unwrap();
-        assert_eq!((s.appearance.fonts.ui_scale, s.appearance.fonts.mail_font_size), (UI_SCALE_MAX, MAIL_FONT_SIZE_MAX));
+        assert_eq!(
+            (
+                s.appearance.fonts.ui_scale,
+                s.appearance.fonts.mail_font_size
+            ),
+            (UI_SCALE_MAX, MAIL_FONT_SIZE_MAX)
+        );
     }
 
     #[test]
@@ -260,7 +297,14 @@ mod tests {
         let cases: [fn(&mut Settings); 3] = [
             |s| s.sync.window = 10,
             |s| s.sync.window = 100_000,
-            |s| s.proxy = ProxyConfig { kind: ProxyKind::Http, host: "".into(), port: 1, ..Default::default() },
+            |s| {
+                s.proxy = ProxyConfig {
+                    kind: ProxyKind::Http,
+                    host: "".into(),
+                    port: 1,
+                    ..Default::default()
+                }
+            },
         ];
         for mutate in cases {
             let mut s = Settings::default();

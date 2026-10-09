@@ -24,13 +24,20 @@ const USER_AGENT: &str =
 
 /// 禁止访问本机和内网地址：恶意邮件不能借这个功能探测局域网
 pub fn is_blocked_host(host: &str) -> bool {
-    let host = host.trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
+    let host = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
     if host.is_empty() || host == "localhost" || host.ends_with(".localhost") {
         return true;
     }
     match host.parse::<IpAddr>() {
         Ok(IpAddr::V4(ip)) => {
-            ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast()
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_broadcast()
         }
         Ok(IpAddr::V6(ip)) => {
             let first = ip.segments()[0];
@@ -45,7 +52,12 @@ pub fn is_blocked_host(host: &str) -> bool {
 
 /// 只转发图片和字体；很多 CDN 给图片返回 octet-stream，也放行
 pub fn allowed_mime(content_type: &str) -> bool {
-    let ct = content_type.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
+    let ct = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
     ct.is_empty()
         || ct.starts_with("image/")
         || ct.starts_with("font/")
@@ -70,7 +82,12 @@ pub struct ImageCache {
 
 impl ImageCache {
     pub fn new(cap: usize) -> Self {
-        Self { map: HashMap::new(), order: VecDeque::new(), bytes: 0, cap }
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            bytes: 0,
+            cap,
+        }
     }
 
     pub fn get(&self, url: &str) -> Option<Cached> {
@@ -84,7 +101,9 @@ impl ImageCache {
             return;
         }
         while self.bytes + size > self.cap {
-            let Some(old) = self.order.pop_front() else { break };
+            let Some(old) = self.order.pop_front() else {
+                break;
+            };
             if let Some(removed) = self.map.remove(&old) {
                 self.bytes -= removed.data.len();
             }
@@ -110,7 +129,10 @@ pub struct RemoteFetcher {
 
 impl RemoteFetcher {
     pub fn new() -> Self {
-        Self { cache: Mutex::new(ImageCache::new(CACHE_BYTES)), agent: Mutex::new(None) }
+        Self {
+            cache: Mutex::new(ImageCache::new(CACHE_BYTES)),
+            agent: Mutex::new(None),
+        }
     }
 
     fn agent(&self, proxy: &ProxyConfig) -> Result<ureq::Agent, String> {
@@ -142,7 +164,10 @@ impl RemoteFetcher {
             .agent(proxy)?
             .get(url)
             .header("User-Agent", USER_AGENT)
-            .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+            .header(
+                "Accept",
+                "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            )
             .call()
             .map_err(|e| format!("下载图片失败: {e}"))?;
         if !resp.status().is_success() {
@@ -165,10 +190,17 @@ impl RemoteFetcher {
             .map_err(|e| format!("读取图片失败: {e}"))?;
 
         let item = Cached {
-            mime: if mime.is_empty() { "application/octet-stream".into() } else { mime },
+            mime: if mime.is_empty() {
+                "application/octet-stream".into()
+            } else {
+                mime
+            },
             data: Arc::new(data),
         };
-        self.cache.lock().map_err(|e| e.to_string())?.insert(url.to_string(), item.clone());
+        self.cache
+            .lock()
+            .map_err(|e| e.to_string())?
+            .insert(url.to_string(), item.clone());
         Ok(item)
     }
 }
@@ -219,7 +251,10 @@ mod tests {
     }
 
     fn item(size: usize) -> Cached {
-        Cached { mime: "image/png".into(), data: Arc::new(vec![0; size]) }
+        Cached {
+            mime: "image/png".into(),
+            data: Arc::new(vec![0; size]),
+        }
     }
 
     #[test]
