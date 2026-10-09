@@ -912,6 +912,49 @@ fn migrate_legacy_data(app: &tauri::App) {
     }
 }
 
+fn show_main_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// 系统托盘：左键单击显示主窗口，右键菜单「显示 / 退出」
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::{
+        menu::{Menu, MenuItem},
+        tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    };
+    let show = MenuItem::with_id(app, "show", "显示 MailBox", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &quit])?;
+    let mut tray = TrayIconBuilder::with_id("main")
+        .tooltip("MailBox")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => show_main_window(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 fn is_http_url(url: &tauri::Url) -> bool {
     matches!(url.scheme(), "http" | "https" | "mailto")
 }
@@ -967,7 +1010,17 @@ pub fn run() {
                     NewWindowResponse::Deny
                 })
                 .build()?;
+            setup_tray(app)?;
             Ok(())
+        })
+        // 点关闭按钮只隐藏到托盘，后台继续自动同步；从托盘菜单「退出」才真正结束
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             list_accounts,
