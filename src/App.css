@@ -826,6 +826,17 @@ input {
   padding: 0 8px 8px;
 }
 
+.load-more {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 4px;
+}
+
+.load-more-end {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* ---------- 邮件列表（Apple Mail 式圆角选中行） ---------- */
 
 .mail-list {

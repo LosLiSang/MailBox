@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Account, type Category, type EmailDarkMode, type Envelope, type SettingsView } from "./api";
+import { api, LIST_LIMIT, LOAD_MORE_PAGE, type Account, type Category, type EmailDarkMode, type Envelope, type SettingsView } from "./api";
 import { AccountDialog } from "./components/AccountDialog";
 import { Avatar } from "./components/Avatar";
 import { Icon } from "./components/Icon";
@@ -27,6 +27,10 @@ type Inbox = {
   mails: Envelope[] | null;
   syncing: boolean;
   error: string | null;
+  /** 正在「加载更多」 */
+  loadingMore?: boolean;
+  /** 服务器上已经没有更早的邮件 */
+  noMore?: boolean;
 };
 
 const EMPTY_INBOX: Inbox = { view: null, mails: null, syncing: false, error: null };
@@ -49,6 +53,8 @@ export default function App() {
   const pendingSeen = useRef(new Map<string, number>());
   const [markingAccounts, setMarkingAccounts] = useState<string[]>([]);
   const activeViews = useRef<Record<string, number | null>>({});
+  /** 每个账号当前列表显示的上限，「加载更多」时增大，切换视图时重置 */
+  const listLimits = useRef<Record<string, number>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState("sidebarCollapsed", false);
   const [categoriesOpen, setCategoriesOpen] = usePersistentState("categoriesOpen", true);
   const [listWidth, setListWidth] = usePersistentState("listWidth", LIST_DEFAULT_WIDTH);
@@ -131,9 +137,10 @@ export default function App() {
 
   const loadCached = useCallback(
     async (email: string, view: number | null = null) => {
+      if (activeViews.current[email] !== view) listLimits.current[email] = LIST_LIMIT;
       activeViews.current[email] = view;
       try {
-        const mails = await api.listCached(email, view);
+        const mails = await api.listCached(email, view, listLimits.current[email] ?? LIST_LIMIT);
         if (activeViews.current[email] === view) patch(email, { view, mails });
       } catch (err) {
         patch(email, { error: String(err) });
@@ -250,6 +257,36 @@ export default function App() {
     }, minutes * 60_000);
     return () => window.clearInterval(timer);
   }, [minutes, accounts, sync]);
+
+  /** 先多显示本地缓存；缓存不够再从服务器拉取更早的邮件 */
+  async function loadMore() {
+    if (!selected) return;
+    const email = selected;
+    const box = inboxes[email];
+    if (!box?.mails || box.loadingMore || syncing.current.has(email)) return;
+    const view = box.view;
+    const limit = (listLimits.current[email] ?? LIST_LIMIT) + LOAD_MORE_PAGE;
+    listLimits.current[email] = limit;
+    patch(email, { loadingMore: true });
+    try {
+      let mails = await api.listCached(email, view, limit);
+      let noMore = false;
+      if (mails.length < limit) {
+        const added = await api.loadOlder(email, LOAD_MORE_PAGE);
+        if (added === 0) noMore = true;
+        else mails = await api.listCached(email, view, limit);
+      }
+      if (activeViews.current[email] !== view) return;
+      patch(email, { mails, noMore });
+      if (noMore) showNotice("没有更早的邮件了");
+      else if (mails.length === box.mails.length) showNotice("已加载更早的邮件，可能被归入了其他分类");
+      void refreshBadge();
+    } catch (err) {
+      showNotice(`加载更多失败: ${err}`);
+    } finally {
+      patch(email, { loadingMore: false });
+    }
+  }
 
   function updateSeen(email: string, uid: number, seen: boolean) {
     setInboxes((all) => {
@@ -640,6 +677,21 @@ export default function App() {
                   categories={categories}
                   currentView={inbox.view}
                   onMove={(mail, view) => moveMail(mail, view)}
+                  footer={
+                    <div className="load-more">
+                      {inbox.noMore ? (
+                        <span className="load-more-end">没有更早的邮件了</span>
+                      ) : (
+                        <button
+                          className="ghost"
+                          onClick={loadMore}
+                          disabled={inbox.loadingMore || inbox.syncing}
+                        >
+                          {inbox.loadingMore ? "加载中…" : "加载更多"}
+                        </button>
+                      )}
+                    </div>
+                  }
                 />
               ) : inbox.syncing ? (
                 <Skeleton />

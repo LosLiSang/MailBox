@@ -457,6 +457,19 @@ async fn sync_inbox(app: AppHandle, email: String) -> Result<SyncStats, String> 
     .await
 }
 
+/// 「加载更多」：从服务器拉取比本地最早缓存更早的一页邮件头，返回新增数量
+#[tauri::command]
+async fn load_older(app: AppHandle, email: String, count: u32) -> Result<usize, String> {
+    let state = app_state(&app);
+    blocking(move || {
+        let count = count.clamp(1, 500);
+        state.with_session(&email, |creds| {
+            sync::load_older(&state.db, creds, &email, INBOX, count)
+        })
+    })
+    .await
+}
+
 /// 列表刷新后由前端后台调用，不阻塞同步结果和阅读。
 #[tauri::command]
 async fn prefetch_unread(app: AppHandle, email: String) -> Result<usize, String> {
@@ -1050,6 +1063,7 @@ pub fn run() {
             clear_cache,
             list_cached,
             sync_inbox,
+            load_older,
             prefetch_unread,
             mark_all_read,
             list_categories,

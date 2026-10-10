@@ -95,6 +95,8 @@ export type BadgeUpdateParams = {
 };
 
 export const LIST_LIMIT = 500;
+/** 「加载更多」每次多显示 / 从服务器多拉取的封数 */
+export const LOAD_MORE_PAGE = 100;
 
 export const api = {
   listAccounts: () => invoke<Account[]>("list_accounts"),
@@ -124,6 +126,8 @@ export const api = {
   listCached: (email: string, view: number | null, limit = LIST_LIMIT) =>
     invoke<Envelope[]>("list_cached", { email, view, limit }),
   syncInbox: (email: string) => invoke<SyncStats>("sync_inbox", { email }),
+  /** 从服务器拉取更早的邮件头，返回新增数量；0 表示没有更早的了 */
+  loadOlder: (email: string, count: number) => invoke<number>("load_older", { email, count }),
   markAllRead: (email: string, view: number | null) => invoke<number[]>("mark_all_read", { email, view }),
   prefetchUnread: (email: string) => invoke<number>("prefetch_unread", { email }),
 
