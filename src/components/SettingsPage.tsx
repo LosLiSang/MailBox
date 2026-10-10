@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { disable as disableAutostart, enable as enableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import { api, type Account, type CacheStats, type Category, type FontFamily, type Rule, type Settings, type SettingsView } from "../api";
 import { formatSize, move, parseSenderList } from "../format";
 import { providerById } from "../providers";
@@ -12,7 +13,7 @@ type Tab = "accounts" | "categories" | "sync" | "reading" | "proxy" | "appearanc
 const TABS: { id: Tab; label: string; desc: string }[] = [
   { id: "accounts", label: "账号", desc: "管理邮箱账号与连接方式。" },
   { id: "categories", label: "分类与规则", desc: "让每个邮箱都有自己的整理方式。" },
-  { id: "sync", label: "同步与缓存", desc: "调整同步频率与本地存储。" },
+  { id: "sync", label: "启动与同步", desc: "调整开机启动、同步频率与本地存储。" },
   { id: "reading", label: "阅读与隐私", desc: "选择适合你的阅读方式与隐私偏好。" },
   { id: "proxy", label: "代理", desc: "配置网络连接并测试可用性。" },
   { id: "appearance", label: "外观", desc: "调整主题、密度与字体，让阅读更舒适。" },
@@ -477,6 +478,8 @@ function SyncTab({ draft, setDraft, onCacheCleared, notify }: DraftProps & Props
   const sync = draft.sync;
   return (
     <>
+      <AutostartSection notify={notify} />
+
       <Section title="同步">
         <label className="field">
           <span>每个文件夹最多保留</span>
@@ -555,6 +558,49 @@ function SyncTab({ draft, setDraft, onCacheCleared, notify }: DraftProps & Props
         </div>
       </Section>
     </>
+  );
+}
+
+/** 开机自启动是系统级状态（注册表启动项），切换后立即生效，不走「保存」按钮 */
+function AutostartSection({ notify }: { notify: (text: string) => void }) {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    isAutostartEnabled()
+      .then(setEnabled)
+      .catch((e) => {
+        setEnabled(false);
+        notify(`读取开机自启动状态失败: ${e}`);
+      });
+  }, []);
+
+  async function toggle(next: boolean) {
+    setBusy(true);
+    try {
+      await (next ? enableAutostart() : disableAutostart());
+      setEnabled(await isAutostartEnabled());
+      notify(next ? "已开启开机自启动" : "已关闭开机自启动");
+    } catch (err) {
+      notify(`设置开机自启动失败: ${err}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Section title="启动">
+      <label className="field checkbox">
+        <input
+          type="checkbox"
+          checked={enabled ?? false}
+          disabled={enabled === null || busy}
+          onChange={(e) => toggle(e.currentTarget.checked)}
+        />
+        <span>开机自动启动</span>
+      </label>
+      <p className="muted">登录系统后自动在后台运行，只显示在任务栏通知区，不弹出主窗口。切换后立即生效。</p>
+    </Section>
   );
 }
 
