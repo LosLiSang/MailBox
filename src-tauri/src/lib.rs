@@ -955,6 +955,13 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// 开机自启动时带上的参数：启动后不弹窗，只留在托盘
+const AUTOSTART_ARG: &str = "--autostart";
+
+fn launched_by_autostart(args: impl IntoIterator<Item = String>) -> bool {
+    args.into_iter().any(|a| a == AUTOSTART_ARG)
+}
+
 fn is_http_url(url: &tauri::Url) -> bool {
     matches!(url.scheme(), "http" | "https" | "mailto")
 }
@@ -964,6 +971,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .arg(AUTOSTART_ARG)
+                .build(),
+        )
         .register_asynchronous_uri_scheme_protocol(render::SCHEME, |ctx, request, responder| {
             let state = app_state(ctx.app_handle());
             let path = request.uri().path().to_string();
@@ -1009,6 +1021,7 @@ pub fn run() {
                     }
                     NewWindowResponse::Deny
                 })
+                .visible(!launched_by_autostart(std::env::args()))
                 .build()?;
             setup_tray(app)?;
             Ok(())
@@ -1064,6 +1077,19 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_autostart_launch() {
+        let cases: &[(&[&str], bool)] = &[
+            (&["mailbox.exe"], false),
+            (&["mailbox.exe", "--autostart"], true),
+            (&["mailbox.exe", "--autostart-x"], false),
+        ];
+        for (args, want) in cases {
+            let owned = args.iter().map(|s| s.to_string());
+            assert_eq!(launched_by_autostart(owned), *want, "{args:?}");
+        }
+    }
 
     #[test]
     fn matches_trusted_senders() {
