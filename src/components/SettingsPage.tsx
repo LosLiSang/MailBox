@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { disable as disableAutostart, enable as enableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import {
   api,
@@ -1206,6 +1207,10 @@ function AdvancedTab({ draft, setDraft }: DraftProps) {
 // ---------- 关于：版本与软件信息 ----------
 
 function AboutTab() {
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => {});
+  }, []);
   return (
     <div className="about-tab">
       <div className="about-hero">
@@ -1215,7 +1220,7 @@ function AboutTab() {
         <div className="about-meta">
           <div className="about-title-row">
             <h2>MailBox</h2>
-            <span className="about-version">v0.1.0</span>
+            {version && <span className="about-version">v{version}</span>}
           </div>
           <p className="about-subtitle">轻量、高效、本地优先的现代桌面邮件客户端</p>
         </div>
@@ -1229,7 +1234,7 @@ function AboutTab() {
           </div>
           <div className="about-feature-item">
             <strong>🔔 原生体验</strong>
-            <span>Windows 任务栏数字未读角标徽标与新邮件桌面横幅通知。</span>
+            <span>任务栏未读角标、新邮件通知、托盘常驻与开机自启动。</span>
           </div>
           <div className="about-feature-item">
             <strong>🛡️ 安全隔离</strong>
@@ -1238,6 +1243,10 @@ function AboutTab() {
           <div className="about-feature-item">
             <strong>🎨 舒适阅读</strong>
             <span>自适应智能深色模式、自定义字体字号与远程图片拦截。</span>
+          </div>
+          <div className="about-feature-item">
+            <strong>🧠 智能分类</strong>
+            <span>发件人规则 + 决策模型（Cloudflare Clef 等）按内容自动归类。</span>
           </div>
         </div>
       </Section>
