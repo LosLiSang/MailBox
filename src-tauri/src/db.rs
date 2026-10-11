@@ -1,8 +1,12 @@
 //! 本地缓存：SQLite 存邮件头、原始邮件正文和每个文件夹的同步状态。
 
 use crate::mail::Envelope;
-use rusqlite::{params, Connection, OptionalExtension};
-use std::{path::Path, sync::Mutex};
+use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
+use std::{
+    path::{Path, PathBuf},
+    sync::Mutex,
+    time::Duration,
+};
 
 /// 列表视图：收件箱（未归类）、某个分类、或全部
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -96,35 +100,117 @@ fn err(e: impl std::fmt::Display) -> String {
     format!("数据库错误: {e}")
 }
 
+/// 文件损坏（而不是被占用、没权限等）时才值得重建缓存
+fn is_corruption(e: &rusqlite::Error) -> bool {
+    matches!(
+        e.sqlite_error_code(),
+        Some(ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase)
+    )
+}
+
+/// 损坏的库改名为 `mail.corrupt-<秒>.db`（连同 -wal / -shm），返回新路径
+fn quarantine(path: &Path) -> std::io::Result<PathBuf> {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("mail");
+    let backup = path.with_file_name(format!("{stem}.corrupt-{secs}.db"));
+    std::fs::rename(path, &backup)?;
+    for suffix in ["-wal", "-shm"] {
+        let side = PathBuf::from(format!("{}{suffix}", path.display()));
+        if side.exists() {
+            std::fs::rename(&side, format!("{}{suffix}", backup.display()))?;
+        }
+    }
+    Ok(backup)
+}
+
 impl Db {
+    /// 打开本地缓存。文件损坏时把旧库改名备份、新建一个，
+    /// 并尽量把分类和规则搬过来；邮件缓存之后从服务器重新同步。
     pub fn open(path: &Path) -> Result<Self, String> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(err)?;
         }
-        Self::init(Connection::open(path).map_err(err)?)
+        match Self::open_checked(path) {
+            Err(e) if is_corruption(&e) => {
+                let backup = quarantine(path).map_err(err)?;
+                eprintln!("本地缓存已损坏（{e}），已备份到 {} 并重建", backup.display());
+                let db = Self::open_checked(path).map_err(err)?;
+                if let Err(e) = db.salvage_from(&backup) {
+                    eprintln!("从损坏的缓存中恢复分类失败: {e}");
+                }
+                Ok(db)
+            }
+            r => r.map_err(err),
+        }
+    }
+
+    fn open_checked(path: &Path) -> rusqlite::Result<Self> {
+        let conn = Connection::open(path)?;
+        let check: String = conn.query_row("PRAGMA quick_check(1)", [], |r| r.get(0))?;
+        if check != "ok" {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+                Some(check),
+            ));
+        }
+        Self::init(conn)
     }
 
     #[cfg(test)]
     pub fn open_in_memory() -> Result<Self, String> {
-        Self::init(Connection::open_in_memory().map_err(err)?)
+        Self::init(Connection::open_in_memory().map_err(err)?).map_err(err)
     }
 
-    fn init(conn: Connection) -> Result<Self, String> {
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")
-            .map_err(err)?;
-        let version: i64 = conn
-            .query_row("PRAGMA user_version", [], |r| r.get(0))
-            .map_err(err)?;
+    fn init(conn: Connection) -> rusqlite::Result<Self> {
+        // 同步线程和界面请求会短暂争锁，等一下而不是立刻报 database is locked
+        conn.busy_timeout(Duration::from_secs(5))?;
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
             conn.execute_batch(&format!(
                 "BEGIN; {sql} PRAGMA user_version = {}; COMMIT;",
                 i + 1
-            ))
-            .map_err(err)?;
+            ))?;
         }
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// 尽量从旧库里搬出分类和规则（用户手动维护的，服务器上没有副本）
+    fn salvage_from(&self, old: &Path) -> rusqlite::Result<()> {
+        self.with_raw(|c| {
+            c.execute("ATTACH DATABASE ?1 AS old", params![old.to_string_lossy()])?;
+            let copied = (|| {
+                let has_description: bool = c.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('categories', 'old') WHERE name = 'description')",
+                    [],
+                    |r| r.get(0),
+                )?;
+                let description = if has_description { "description" } else { "''" };
+                c.execute_batch(&format!(
+                    "BEGIN;
+                     INSERT OR IGNORE INTO categories (account, id, name, color, position, created_at, description)
+                       SELECT account, id, name, color, position, created_at, {description} FROM old.categories;
+                     INSERT OR IGNORE INTO sender_rules (id, account, pattern, category_id, position)
+                       SELECT id, account, pattern, category_id, position FROM old.sender_rules;
+                     COMMIT;"
+                ))
+            })();
+            if copied.is_err() {
+                let _ = c.execute_batch("ROLLBACK");
+            }
+            let _ = c.execute_batch("DETACH DATABASE old");
+            copied
+        })
+    }
+
+    fn with_raw<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> rusqlite::Result<T> {
+        let mut conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        f(&mut conn)
     }
 
     fn with<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> Result<T, String> {
@@ -968,6 +1054,48 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         assert_eq!(db.cached_flags(A, F).unwrap(), [(9, true)]);
+        drop(db);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn corrupt_file_is_backed_up_and_rebuilt_keeping_categories() {
+        let dir = std::env::temp_dir().join(format!("mailbox-corrupt-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let path = dir.join("mail.db");
+
+        // 正常的库：有分类、规则和邮件
+        {
+            let db = Db::open(&path).unwrap();
+            db.default_categories(A).unwrap();
+            db.update_category(A, 1, None, None, Some("老板发的")).unwrap();
+            db.add_rule(A, "@boss.com", 1, false).unwrap();
+            db.apply_sync(A, F, &[], &[], &[env(1, false)]).unwrap();
+        }
+        let healthy = dir.join("healthy.db");
+        std::fs::copy(&path, &healthy).unwrap();
+
+        // 文件头被写坏：打开时备份并重建，应用不会因此起不来
+        std::fs::write(&path, vec![0xAB; 8192]).unwrap();
+        let db = Db::open(&path).unwrap();
+        assert!(db.cached_flags(A, F).unwrap().is_empty());
+        let backups: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("mail.corrupt-"))
+            .collect();
+        assert_eq!(backups.len(), 1);
+
+        // 旧库还能读时，分类和规则会搬到新库
+        db.salvage_from(&healthy).unwrap();
+        let cats = db.list_categories(A).unwrap();
+        assert_eq!(cats.len(), 4);
+        assert_eq!(cats[0].description, "老板发的");
+        assert_eq!(db.list_rules(A).unwrap().len(), 1);
+        // 搬迁可重复执行
+        db.salvage_from(&healthy).unwrap();
+        assert_eq!(db.list_categories(A).unwrap().len(), 4);
+
         drop(db);
         std::fs::remove_dir_all(dir).ok();
     }
