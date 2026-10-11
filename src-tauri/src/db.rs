@@ -19,6 +19,8 @@ pub struct Category {
     pub name: String,
     pub color: String,
     pub count: i64,
+    /// 给智能分类模型看的说明，空表示只用分类名
+    pub description: String,
 }
 
 /// #rgb 或 #rrggbb
@@ -80,6 +82,9 @@ CREATE TABLE sender_rules (
 ALTER TABLE messages ADD COLUMN category_id INTEGER;
 CREATE INDEX idx_messages_category ON messages (account, category_id);
 CREATE INDEX idx_rules_account ON sender_rules (account);
+"#,
+    r#"
+ALTER TABLE categories ADD COLUMN description TEXT NOT NULL DEFAULT '';
 "#,
 ];
 
@@ -471,11 +476,11 @@ impl Db {
     pub fn list_categories(&self, account: &str) -> Result<Vec<Category>, String> {
         self.with(|c| {
             let mut stmt = c.prepare(
-                "SELECT cat.id, cat.name, cat.color, count(m.uid)
+                "SELECT cat.id, cat.name, cat.color, count(m.uid), cat.description
                  FROM categories cat
                  LEFT JOIN messages m ON m.account = cat.account AND m.category_id = cat.id
                  WHERE cat.account = ?1
-                 GROUP BY cat.id, cat.name, cat.color
+                 GROUP BY cat.id, cat.name, cat.color, cat.description
                  ORDER BY cat.position, cat.id",
             )?;
             let rows = stmt.query_map(params![account], |r| {
@@ -484,6 +489,7 @@ impl Db {
                     name: r.get(1)?,
                     color: r.get(2)?,
                     count: r.get(3)?,
+                    description: r.get(4)?,
                 })
             })?;
             rows.collect()
@@ -529,19 +535,25 @@ impl Db {
                 name: name.into(),
                 color: color.to_lowercase(),
                 count: 0,
+                description: String::new(),
             })
         })
     }
 
-    /// 重命名 / 改颜色；None 表示不修改
+    /// 重命名 / 改颜色 / 改说明；None 表示不修改
     pub fn update_category(
         &self,
         account: &str,
         id: i64,
         name: Option<&str>,
         color: Option<&str>,
+        description: Option<&str>,
     ) -> Result<(), String> {
         let name = name.map(str::trim);
+        let description = description.map(str::trim);
+        if description.is_some_and(|d| d.chars().count() > 200) {
+            return Err("分类说明最多 200 个字符".into());
+        }
         if let Some(n) = name {
             if n.is_empty() || n.chars().count() > 20 {
                 return Err("分类名称需为 1–20 个字符".into());
@@ -556,9 +568,10 @@ impl Db {
             c.execute(
                 "UPDATE categories SET
                     name = coalesce(?3, name),
-                    color = coalesce(?4, color)
+                    color = coalesce(?4, color),
+                    description = coalesce(?5, description)
                  WHERE account = ?1 AND id = ?2",
-                params![account, id, name, color.map(str::to_lowercase)],
+                params![account, id, name, color.map(str::to_lowercase), description],
             )
         })?;
         (n == 1)
@@ -878,14 +891,19 @@ mod tests {
         assert!(db.create_category(A, "临时", "red").is_err());
 
         // 重命名 + 改色
-        db.update_category(A, junk.id, Some("垃圾"), Some("#FF0000"))
+        db.update_category(A, junk.id, Some("垃圾"), Some("#FF0000"), None)
+            .unwrap();
+        db.update_category(A, junk.id, None, None, Some(" 推广和营销 "))
             .unwrap();
         let cats = db.list_categories(A).unwrap();
         let junk = cats.iter().find(|c| c.id == junk.id).unwrap();
         assert_eq!(
-            (junk.name.as_str(), junk.color.as_str()),
-            ("垃圾", "#ff0000")
+            (junk.name.as_str(), junk.color.as_str(), junk.description.as_str()),
+            ("垃圾", "#ff0000", "推广和营销")
         );
+        assert!(db
+            .update_category(A, junk.id, None, None, Some(&"x".repeat(201)))
+            .is_err());
 
         // 删除分类：邮件回收件箱，规则一并删除
         assert!(db.delete_category(A, junk.id).unwrap());

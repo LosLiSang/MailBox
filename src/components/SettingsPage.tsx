@@ -1,18 +1,30 @@
 import { useEffect, useState } from "react";
 import { disable as disableAutostart, enable as enableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
-import { api, type Account, type CacheStats, type Category, type FontFamily, type Rule, type Settings, type SettingsView } from "../api";
-import { formatSize, move, parseSenderList } from "../format";
+import {
+  api,
+  type Account,
+  type CacheStats,
+  type Category,
+  type ClassifySettings,
+  type ClassifyTestResult,
+  type FontFamily,
+  type Rule,
+  type Settings,
+  type SettingsView,
+} from "../api";
+import { clefAccountId, clefEndpoint, formatSize, move, parseSenderList } from "../format";
 import { providerById } from "../providers";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 
 const PALETTE = ["#d29922", "#539bf5", "#6e7781", "#f47067", "#3fb950", "#a371f7", "#db61a2", "#e5a38c"];
 
-type Tab = "accounts" | "categories" | "sync" | "reading" | "proxy" | "appearance" | "advanced" | "about";
+type Tab = "accounts" | "categories" | "classify" | "sync" | "reading" | "proxy" | "appearance" | "advanced" | "about";
 
 const TABS: { id: Tab; label: string; desc: string }[] = [
   { id: "accounts", label: "账号", desc: "管理邮箱账号与连接方式。" },
   { id: "categories", label: "分类与规则", desc: "让每个邮箱都有自己的整理方式。" },
+  { id: "classify", label: "智能分类", desc: "用决策模型按内容给新邮件归类。" },
   { id: "sync", label: "启动与同步", desc: "调整开机启动、同步频率与本地存储。" },
   { id: "reading", label: "阅读与隐私", desc: "选择适合你的阅读方式与隐私偏好。" },
   { id: "proxy", label: "代理", desc: "配置网络连接并测试可用性。" },
@@ -48,21 +60,25 @@ export function SettingsPage(props: Props) {
   const [draft, setDraft] = useState<Settings>(() => stripView(settings));
   /** undefined: 不修改；"": 清除 */
   const [proxyPassword, setProxyPassword] = useState<string | undefined>(undefined);
+  /** undefined: 不修改；"": 清除 */
+  const [classifyToken, setClassifyToken] = useState<string | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => setTab(initialTab), [initialTab]);
 
-  const dirty = JSON.stringify(stripView(settings)) !== JSON.stringify(draft) || proxyPassword !== undefined;
+  const dirty =
+    JSON.stringify(stripView(settings)) !== JSON.stringify(draft) || proxyPassword !== undefined || classifyToken !== undefined;
 
   async function save() {
     setSaving(true);
     setError(null);
     try {
-      const saved = await api.saveSettings(draft, proxyPassword);
+      const saved = await api.saveSettings(draft, { proxyPassword, classifyToken });
       props.onSettingsSaved(saved);
       setDraft(stripView(saved));
       setProxyPassword(undefined);
+      setClassifyToken(undefined);
       props.notify("设置已保存");
     } catch (err) {
       setError(String(err));
@@ -74,6 +90,7 @@ export function SettingsPage(props: Props) {
   function discard() {
     setDraft(stripView(settings));
     setProxyPassword(undefined);
+    setClassifyToken(undefined);
     setError(null);
   }
 
@@ -105,6 +122,18 @@ export function SettingsPage(props: Props) {
           </header>
           {tab === "accounts" && <AccountsTab {...props} />}
           {tab === "categories" && <CategoriesTab {...props} />}
+          {tab === "classify" && (
+            <ClassifyTab
+              draft={draft}
+              setDraft={setDraft}
+              hasToken={settings.hasClassifyToken}
+              token={classifyToken}
+              setToken={setClassifyToken}
+              email={props.email}
+              categories={props.categories}
+              onOpenCategories={() => setTab("categories")}
+            />
+          )}
           {tab === "sync" && <SyncTab draft={draft} setDraft={setDraft} {...props} />}
           {tab === "reading" && <ReadingTab draft={draft} setDraft={setDraft} />}
           {tab === "proxy" && (
@@ -139,7 +168,11 @@ export function SettingsPage(props: Props) {
   );
 }
 
-function stripView({ hasProxyPassword: _, ...s }: SettingsView | Settings & { hasProxyPassword?: boolean }): Settings {
+function stripView({
+  hasProxyPassword: _,
+  hasClassifyToken: __,
+  ...s
+}: SettingsView | (Settings & { hasProxyPassword?: boolean; hasClassifyToken?: boolean })): Settings {
   return s;
 }
 
@@ -245,6 +278,7 @@ function CategoriesTab({ email, categories, onCategoriesChanged, notify }: Props
   const [newColor, setNewColor] = useState(PALETTE[2]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
+  const [editDesc, setEditDesc] = useState("");
   const [pattern, setPattern] = useState("");
   const [ruleCategory, setRuleCategory] = useState<number | "">("");
   const [applyExisting, setApplyExisting] = useState(true);
@@ -281,7 +315,7 @@ function CategoriesTab({ email, categories, onCategoriesChanged, notify }: Props
 
   async function rename(id: number) {
     try {
-      await api.updateCategory(email, id, editName || null, null);
+      await api.updateCategory(email, id, { name: editName || undefined, description: editDesc });
       onCategoriesChanged(await api.listCategories(email));
       setEditingId(null);
     } catch (err) {
@@ -326,7 +360,14 @@ function CategoriesTab({ email, categories, onCategoriesChanged, notify }: Props
               <span className="view-dot" style={{ background: c.color }} />
               {editingId === c.id ? (
                 <>
-                  <input className="grow" value={editName} onChange={(e) => setEditName(e.currentTarget.value)} autoFocus />
+                  <input className="category-name-input" value={editName} onChange={(e) => setEditName(e.currentTarget.value)} autoFocus />
+                  <input
+                    className="grow"
+                    placeholder="分类说明（可选，给智能分类看），如：营销推广、订阅资讯"
+                    maxLength={200}
+                    value={editDesc}
+                    onChange={(e) => setEditDesc(e.currentTarget.value)}
+                  />
                   <button className="ghost small" onClick={() => rename(c.id)}>
                     保存
                   </button>
@@ -339,6 +380,7 @@ function CategoriesTab({ email, categories, onCategoriesChanged, notify }: Props
                   <div className="account-row-text">
                     {c.name}
                     <span className="muted"> {c.count} 封</span>
+                    {c.description && <div className="muted category-desc">{c.description}</div>}
                   </div>
                   <div className="row-actions">
                     <button className="ghost small icon-btn" onClick={() => reorder(i, i - 1)} disabled={i === 0} title="上移" aria-label="上移">
@@ -357,9 +399,10 @@ function CategoriesTab({ email, categories, onCategoriesChanged, notify }: Props
                       onClick={() => {
                         setEditingId(c.id);
                         setEditName(c.name);
+                        setEditDesc(c.description);
                       }}
                     >
-                      重命名
+                      编辑
                     </button>
                     <button className="ghost small danger" onClick={() => remove(c.id)}>
                       删除
@@ -441,6 +484,184 @@ function CategoriesTab({ email, categories, onCategoriesChanged, notify }: Props
           </button>
         </div>
         {fonts.length > 0 && <p className="muted">本机共 {fonts.length} 个字体家族（在「外观」里使用）</p>}
+      </Section>
+    </>
+  );
+}
+
+// ---------- 智能分类 ----------
+
+type ClassifyProps = DraftProps & {
+  hasToken: boolean;
+  token: string | undefined;
+  setToken: (t: string | undefined) => void;
+  email: string;
+  categories: Category[];
+  onOpenCategories: () => void;
+};
+
+function ClassifyTab({ draft, setDraft, hasToken, token, setToken, email, categories, onOpenCategories }: ClassifyProps) {
+  const c = draft.classify;
+  const set = (p: Partial<ClassifySettings>) => setDraft({ ...draft, classify: { ...c, ...p } });
+  const accountId = clefAccountId(c.endpoint);
+  const [provider, setProvider] = useState<"workers" | "custom">(() =>
+    !c.endpoint || accountId !== null ? "workers" : "custom",
+  );
+  const [from, setFrom] = useState("GitHub <noreply@github.com>");
+  const [subject, setSubject] = useState("[MailBox] Pull request #4 merged");
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ ok: true; r: ClassifyTestResult } | { ok: false; text: string } | null>(null);
+
+  async function test() {
+    setTesting(true);
+    setResult(null);
+    try {
+      setResult({ ok: true, r: await api.testClassify(email, c, from, subject, token) });
+    } catch (err) {
+      setResult({ ok: false, text: String(err) });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  const tokenSaved = hasToken && token === undefined;
+  return (
+    <>
+      <Section
+        title="智能分类"
+        desc="发件人规则没有命中的新邮件，交给兼容 Jev schema 的决策模型（如 Cloudflare Clef）按内容判断分类；置信度不够的不改动。"
+      >
+        <label className="field checkbox">
+          <input type="checkbox" checked={c.enabled} onChange={(e) => set({ enabled: e.currentTarget.checked })} />
+          <span>开启智能分类</span>
+        </label>
+        <p className="muted">
+          ⚠️ 开启后，新邮件的<strong>发件人和主题</strong>会发送到下面的服务端（不发送正文和附件）。请只使用你信任的服务。
+          每次同步最多分类 50 封，历史邮件和「加载更多」只按发件人规则归类。
+        </p>
+      </Section>
+
+      <Section title="模型服务">
+        <label className="field">
+          <span>服务</span>
+          <select
+            value={provider}
+            onChange={(e) => {
+              const next = e.currentTarget.value as "workers" | "custom";
+              setProvider(next);
+              if (next === "workers") set({ endpoint: clefEndpoint(accountId ?? ""), model: "" });
+            }}
+          >
+            <option value="workers">Cloudflare Workers AI（Clef Flash）</option>
+            <option value="custom">自定义端点</option>
+          </select>
+        </label>
+        {provider === "workers" ? (
+          <>
+            <label className="field">
+              <span>Account ID</span>
+              <input
+                placeholder="Cloudflare 控制台右侧的 Account ID"
+                value={accountId ?? ""}
+                onChange={(e) => set({ endpoint: clefEndpoint(e.currentTarget.value), model: "" })}
+              />
+            </label>
+            <p className="muted">在 Cloudflare 控制台创建带「Workers AI」权限的 API Token，填在下方。</p>
+          </>
+        ) : (
+          <>
+            <label className="field">
+              <span>端点 URL</span>
+              <input
+                placeholder="https://… 或 http://localhost:端口/…"
+                value={c.endpoint}
+                onChange={(e) => set({ endpoint: e.currentTarget.value })}
+              />
+            </label>
+            <label className="field">
+              <span className="label-text">
+                model 字段 <span className="optional">可选</span>
+              </span>
+              <input placeholder="如 clef-flash；留空则不发送" value={c.model} onChange={(e) => set({ model: e.currentTarget.value })} />
+            </label>
+            <p className="muted">请求体：{"{ model?, state, questions: { category: { type: \"choice\", … } } }"}，按 Bearer token 认证。</p>
+          </>
+        )}
+        <label className="field">
+          <span className="label-text">
+            API Token <span className="optional">{tokenSaved ? "已保存，留空不修改" : provider === "custom" ? "可选" : ""}</span>
+          </span>
+          <input
+            type="password"
+            value={token ?? ""}
+            placeholder={tokenSaved ? "••••••••" : ""}
+            onChange={(e) => setToken(e.currentTarget.value)}
+          />
+        </label>
+        {hasToken && (
+          <button className="link" onClick={() => setToken("")}>
+            清除已保存的 Token
+          </button>
+        )}
+        <label className="field">
+          <span>置信度阈值</span>
+          <select value={c.threshold} onChange={(e) => set({ threshold: Number(e.currentTarget.value) })}>
+            {[0.5, 0.6, 0.7, 0.8, 0.9].map((v) => (
+              <option key={v} value={v}>
+                {Math.round(v * 100)}%{v === 0.7 ? "（推荐）" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field checkbox">
+          <input type="checkbox" checked={c.useProxy} onChange={(e) => set({ useProxy: e.currentTarget.checked })} />
+          <span>通过「代理」设置访问</span>
+        </label>
+      </Section>
+
+      <Section title="分类说明" desc="模型根据分类名和说明做判断。说明写得越具体，分得越准。">
+        <ul className="account-rows">
+          {categories.map((cat) => (
+            <li key={cat.id} className="category-row">
+              <span className="view-dot" style={{ background: cat.color }} />
+              <div className="account-row-text">
+                {cat.name}
+                <div className="muted category-desc">{cat.description || "（未填写说明，只用分类名）"}</div>
+              </div>
+            </li>
+          ))}
+          {categories.length === 0 && <li className="muted">当前账号还没有分类</li>}
+        </ul>
+        <button className="link" onClick={onOpenCategories}>
+          在「分类与规则」中编辑说明
+        </button>
+      </Section>
+
+      <Section title="测试" desc="使用当前填写（尚未保存）的配置和当前账号的分类，对一封示例邮件试分类。">
+        <div className="server-row">
+          <label className="grow">
+            发件人
+            <input value={from} onChange={(e) => setFrom(e.currentTarget.value)} />
+          </label>
+        </div>
+        <div className="server-row">
+          <label className="grow">
+            主题
+            <input value={subject} onChange={(e) => setSubject(e.currentTarget.value)} />
+          </label>
+          <button className="ghost" onClick={test} disabled={testing || !c.endpoint.trim() || !email}>
+            {testing ? "测试中…" : "测试"}
+          </button>
+        </div>
+        {result &&
+          (result.ok ? (
+            <p className="success">
+              ✅ {result.r.label} · 置信度 {Math.round(result.r.confidence * 100)}% · {result.r.elapsedMs} ms
+              {!result.r.accepted && "（低于阈值，实际同步时不会改动）"}
+            </p>
+          ) : (
+            <p className="error">❌ {result.text}</p>
+          ))}
       </Section>
     </>
   );

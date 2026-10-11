@@ -17,6 +17,8 @@ pub fn oauth_token_key(email: &str) -> String {
 }
 
 pub const PROXY_PASSWORD_KEY: &str = "proxy";
+/// 智能分类端点的 API token（Workers AI 等）
+pub const CLASSIFY_TOKEN_KEY: &str = "classify-token";
 
 // ---------- 纯函数 ----------
 

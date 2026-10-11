@@ -126,6 +126,7 @@ pub struct Settings {
     pub reading: ReadingSettings,
     pub appearance: AppearanceSettings,
     pub oauth: OAuthApps,
+    pub classify: crate::classify::ClassifySettings,
 }
 
 pub const WINDOW_MIN: u32 = 50;
@@ -167,6 +168,8 @@ pub fn normalize(mut s: Settings) -> Result<Settings, String> {
     f.mail_font_size = f
         .mail_font_size
         .clamp(MAIL_FONT_SIZE_MIN, MAIL_FONT_SIZE_MAX);
+
+    s.classify = crate::classify::normalize(s.classify)?;
 
     for v in [
         &mut s.oauth.google_client_id,
@@ -250,6 +253,7 @@ mod tests {
         assert!(partial.reading.images_via_proxy);
         assert_eq!(partial.appearance.fonts.ui_scale, 100);
         assert_eq!(partial.appearance.fonts.mail_font_size, 0);
+        assert!(!partial.classify.enabled);
     }
 
     #[test]

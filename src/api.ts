@@ -26,7 +26,15 @@ export type Account = {
 
 export type AccountInput = Omit<Account, "auth"> & { password: string };
 
-export type SyncStats = { added: number; deleted: number; updated: number };
+export type SyncStats = {
+  added: number;
+  deleted: number;
+  updated: number;
+  /** 智能分类采纳的封数 */
+  classified: number;
+  /** 智能分类失败原因（不影响同步） */
+  classifyError: string | null;
+};
 
 export type Attachment = { part: number; name: string; mime: string; size: number };
 
@@ -71,16 +79,29 @@ export type Settings = {
     mailFontSize: number;
   };
   oauth: { googleClientId: string; googleClientSecret: string; microsoftClientId: string };
+  classify: ClassifySettings;
 };
 
-export type SettingsView = Settings & { hasProxyPassword: boolean };
+/** 智能分类：兼容 Jev schema 的决策模型端点（如 Cloudflare Clef） */
+export type ClassifySettings = {
+  enabled: boolean;
+  endpoint: string;
+  /** 请求体 model 字段，空则不发送 */
+  model: string;
+  threshold: number;
+  useProxy: boolean;
+};
+
+export type ClassifyTestResult = { label: string; confidence: number; accepted: boolean; elapsedMs: number };
+
+export type SettingsView = Settings & { hasProxyPassword: boolean; hasClassifyToken: boolean };
 
 export type CacheStats = {
   fileBytes: number;
   accounts: { email: string; headers: number; bodies: number; bodyBytes: number }[];
 };
 
-export type Category = { id: number; name: string; color: string; count: number };
+export type Category = { id: number; name: string; color: string; count: number; description: string };
 
 export type Rule = { id: number; pattern: string; categoryId: number; categoryName: string; categoryColor: string };
 
@@ -116,8 +137,16 @@ export const api = {
 
   getSettings: () => invoke<SettingsView>("get_settings"),
   /** proxyPassword: undefined 不修改，"" 清除 */
-  saveSettings: (settings: Settings, proxyPassword?: string) =>
-    invoke<SettingsView>("save_settings", { settings, proxyPassword: proxyPassword ?? null }),
+  /** proxyPassword / classifyToken: undefined 不修改，"" 清除 */
+  saveSettings: (settings: Settings, secrets: { proxyPassword?: string; classifyToken?: string } = {}) =>
+    invoke<SettingsView>("save_settings", {
+      settings,
+      proxyPassword: secrets.proxyPassword ?? null,
+      classifyToken: secrets.classifyToken ?? null,
+    }),
+  /** classifyToken: undefined 使用已保存的 token */
+  testClassify: (email: string, settings: ClassifySettings, from: string, subject: string, classifyToken?: string) =>
+    invoke<ClassifyTestResult>("test_classify", { email, settings, token: classifyToken ?? null, from, subject }),
   testProxy: (proxy: Settings["proxy"], target: string, proxyPassword?: string) =>
     invoke<number>("test_proxy", { proxy, target, proxyPassword: proxyPassword ?? null }),
   cacheStats: () => invoke<CacheStats>("cache_stats"),
@@ -134,8 +163,15 @@ export const api = {
   listCategories: (email: string) => invoke<Category[]>("list_categories", { email }),
   createCategory: (email: string, name: string, color: string) =>
     invoke<Category>("create_category", { email, name, color }),
-  updateCategory: (email: string, id: number, name: string | null, color: string | null) =>
-    invoke<void>("update_category", { email, id, name, color }),
+  /** null 表示不修改 */
+  updateCategory: (email: string, id: number, patch: { name?: string; color?: string; description?: string }) =>
+    invoke<void>("update_category", {
+      email,
+      id,
+      name: patch.name ?? null,
+      color: patch.color ?? null,
+      description: patch.description ?? null,
+    }),
   deleteCategory: (email: string, id: number) => invoke<boolean>("delete_category", { email, id }),
   reorderCategories: (email: string, ids: number[]) => invoke<void>("reorder_categories", { email, ids }),
   moveMessages: (email: string, uids: number[], view: number | null) =>
