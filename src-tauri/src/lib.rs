@@ -1092,6 +1092,13 @@ fn is_http_url(url: &tauri::Url) -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 必须最先注册：已有实例在运行（哪怕只在托盘里）时只唤起它的窗口并退出，
+        // 避免两个进程同时写 mail.db 导致 database disk image is malformed
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !launched_by_autostart(args) {
+                show_main_window(app);
+            }
+        }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
