@@ -1955,6 +1955,17 @@ select:disabled {
   gap: 10px;
 }
 
+.category-name-input {
+  width: 120px;
+  flex: none;
+}
+
+.category-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  white-space: normal;
+}
+
 .cache-table {
   width: 100%;
   border-collapse: collapse;

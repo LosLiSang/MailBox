@@ -10,6 +10,8 @@ import {
   move,
   parseSenderList,
   syncSummary,
+  clefEndpoint,
+  clefAccountId,
 } from "./format";
 import { detectProvider, providerById, unsupportedReason } from "./providers";
 
@@ -94,6 +96,7 @@ describe("syncSummary", () => {
     [{ added: 0, deleted: 0, updated: 0 }, "已是最新"],
     [{ added: 3, deleted: 0, updated: 0 }, "3 封新邮件"],
     [{ added: 1, deleted: 2, updated: 4 }, "1 封新邮件，2 封已删除，4 封状态更新"],
+    [{ added: 5, deleted: 0, updated: 0, classified: 2 }, "5 封新邮件，智能分类 2 封"],
   ])("%o -> %s", (stats, want) => {
     expect(syncSummary(stats)).toBe(want);
   });
@@ -205,5 +208,23 @@ describe("layout", async () => {
     ["{bad", false, false],
   ] as const)("parseStored(%s, %s) -> %s", (raw, fallback, want) => {
     expect(parseStored(raw, fallback)).toBe(want);
+  });
+});
+
+describe("clefEndpoint / clefAccountId", () => {
+  const url = "https://api.cloudflare.com/client/v4/accounts/abc123/ai/run/@cf/cloudflare/clef-flash";
+  it.each([
+    [" abc123 ", url],
+    ["", ""],
+  ])("clefEndpoint(%j)", (id, want) => {
+    expect(clefEndpoint(id)).toBe(want);
+  });
+  it.each([
+    [url, "abc123"],
+    ["", ""],
+    ["https://example.com/decide", null],
+    ["https://api.cloudflare.com/client/v4/accounts//ai/run/@cf/cloudflare/clef-flash", null],
+  ])("clefAccountId(%j)", (endpoint, want) => {
+    expect(clefAccountId(endpoint)).toBe(want);
   });
 });

@@ -35,9 +35,10 @@ export function formatSize(bytes: number): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
 }
 
-export function syncSummary(stats: { added: number; deleted: number; updated: number }): string {
+export function syncSummary(stats: { added: number; deleted: number; updated: number; classified?: number }): string {
   const parts = [
     stats.added && `${stats.added} 封新邮件`,
+    stats.classified && `智能分类 ${stats.classified} 封`,
     stats.deleted && `${stats.deleted} 封已删除`,
     stats.updated && `${stats.updated} 封状态更新`,
   ].filter(Boolean);
@@ -84,4 +85,22 @@ export function move<T>(list: T[], from: number, to: number): T[] {
   const [item] = next.splice(from, 1);
   next.splice(to, 0, item);
   return next;
+}
+
+const CLEF_PREFIX = "https://api.cloudflare.com/client/v4/accounts/";
+const CLEF_SUFFIX = "/ai/run/@cf/cloudflare/clef-flash";
+
+/** 由 Cloudflare Account ID 生成 Workers AI Clef Flash 端点；空 ID 返回空串 */
+export function clefEndpoint(accountId: string): string {
+  const id = accountId.trim();
+  return id ? `${CLEF_PREFIX}${encodeURIComponent(id)}${CLEF_SUFFIX}` : "";
+}
+
+/** 端点是 Workers AI Clef Flash 时取出 Account ID；空端点返回 ""；其他端点返回 null */
+export function clefAccountId(endpoint: string): string | null {
+  const e = endpoint.trim();
+  if (!e) return "";
+  if (!e.startsWith(CLEF_PREFIX) || !e.endsWith(CLEF_SUFFIX)) return null;
+  const id = e.slice(CLEF_PREFIX.length, e.length - CLEF_SUFFIX.length);
+  return id && !id.includes("/") ? decodeURIComponent(id) : null;
 }

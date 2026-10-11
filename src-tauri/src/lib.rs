@@ -1,4 +1,5 @@
 mod accounts;
+mod classify;
 mod db;
 mod fonts;
 mod imap_client;
@@ -78,6 +79,20 @@ impl AppState {
     ) -> Result<T, String> {
         let account = self.store.get(email)?;
         f(&self.credentials(&account)?)
+    }
+
+    /// 智能分类未开启时返回 None；token 从 keyring 读
+    fn classifier(&self, email: &str) -> Result<Option<classify::Classifier>, String> {
+        let settings = self.settings.get().classify;
+        if !settings.enabled {
+            return Ok(None);
+        }
+        classify::Classifier::new(
+            settings,
+            secrets::get(secrets::CLASSIFY_TOKEN_KEY)?,
+            &self.settings.proxy(),
+            self.db.list_categories(email)?,
+        )
     }
 
     /// 确保账号有默认分类（幂等，新增账号时调用）
@@ -307,33 +322,46 @@ struct SettingsView {
     #[serde(flatten)]
     settings: Settings,
     has_proxy_password: bool,
+    has_classify_token: bool,
+}
+
+fn settings_view(settings: Settings) -> Result<SettingsView, String> {
+    Ok(SettingsView {
+        settings,
+        has_proxy_password: secrets::get(secrets::PROXY_PASSWORD_KEY)?.is_some(),
+        has_classify_token: secrets::get(secrets::CLASSIFY_TOKEN_KEY)?.is_some(),
+    })
 }
 
 #[tauri::command]
 fn get_settings(state: State<Arc<AppState>>) -> Result<SettingsView, String> {
-    Ok(SettingsView {
-        settings: state.settings.get(),
-        has_proxy_password: secrets::get(secrets::PROXY_PASSWORD_KEY)?.is_some(),
-    })
+    settings_view(state.settings.get())
 }
 
-/// proxy_password: None 不修改，Some("") 清除
+/// None 不修改，Some("") 清除
+fn update_secret(key: &str, value: Option<&str>) -> Result<(), String> {
+    match value {
+        None => Ok(()),
+        Some("") => secrets::delete(key),
+        Some(v) => secrets::set(key, v),
+    }
+}
+
+/// proxy_password / classify_token: None 不修改，Some("") 清除
 #[tauri::command]
 fn save_settings(
     state: State<Arc<AppState>>,
     settings: Settings,
     proxy_password: Option<String>,
+    classify_token: Option<String>,
 ) -> Result<SettingsView, String> {
     let saved = state.settings.save(settings)?;
-    match proxy_password.as_deref() {
-        None => {}
-        Some("") => secrets::delete(secrets::PROXY_PASSWORD_KEY)?,
-        Some(p) => secrets::set(secrets::PROXY_PASSWORD_KEY, p)?,
-    }
-    Ok(SettingsView {
-        settings: saved,
-        has_proxy_password: secrets::get(secrets::PROXY_PASSWORD_KEY)?.is_some(),
-    })
+    update_secret(secrets::PROXY_PASSWORD_KEY, proxy_password.as_deref())?;
+    update_secret(
+        secrets::CLASSIFY_TOKEN_KEY,
+        classify_token.as_deref().map(str::trim),
+    )?;
+    settings_view(saved)
 }
 
 /// 用表单里尚未保存的代理配置，测试能否连到指定服务器
@@ -450,9 +478,18 @@ async fn sync_inbox(app: AppHandle, email: String) -> Result<SyncStats, String> 
     let state = app_state(&app);
     blocking(move || {
         let window = state.settings.get().sync.window;
-        state.with_session(&email, |creds| {
-            sync::sync_folder(&state.db, creds, &email, INBOX, window)
-        })
+        // 智能分类配置有问题时只提示，不影响同步
+        let (classifier, setup_error) = match state.classifier(&email) {
+            Ok(c) => (c, None),
+            Err(e) => (None, Some(e)),
+        };
+        let mut stats = state.with_session(&email, |creds| {
+            sync::sync_folder(&state.db, creds, &email, INBOX, window, classifier.as_ref())
+        })?;
+        if stats.classify_error.is_none() {
+            stats.classify_error = setup_error;
+        }
+        Ok(stats)
     })
     .await
 }
@@ -564,12 +601,85 @@ async fn update_category(
     id: i64,
     name: Option<String>,
     color: Option<String>,
+    description: Option<String>,
 ) -> Result<(), String> {
     let state = app_state(&app);
     blocking(move || {
-        state
-            .db
-            .update_category(&email, id, name.as_deref(), color.as_deref())
+        state.db.update_category(
+            &email,
+            id,
+            name.as_deref(),
+            color.as_deref(),
+            description.as_deref(),
+        )
+    })
+    .await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClassifyTestResult {
+    /// 分类名；收件箱为 "收件箱"
+    label: String,
+    confidence: f64,
+    /// 是否达到阈值、会被采纳
+    accepted: bool,
+    elapsed_ms: u64,
+}
+
+/// 用表单里尚未保存的配置，对一封示例邮件试分类
+#[tauri::command]
+async fn test_classify(
+    app: AppHandle,
+    email: String,
+    settings: classify::ClassifySettings,
+    token: Option<String>,
+    from: String,
+    subject: String,
+) -> Result<ClassifyTestResult, String> {
+    let state = app_state(&app);
+    blocking(move || {
+        let mut settings = classify::normalize(settings)?;
+        if settings.endpoint.is_empty() {
+            return Err("请先填写端点".into());
+        }
+        settings.enabled = true;
+        let token = match token {
+            Some(t) => Some(t),
+            None => secrets::get(secrets::CLASSIFY_TOKEN_KEY)?,
+        };
+        let categories = state.db.list_categories(&email)?;
+        let threshold = settings.threshold;
+        let classifier =
+            classify::Classifier::new(settings, token, &state.settings.proxy(), categories)?
+                .ok_or("当前账号还没有分类")?;
+        let env = mail::Envelope {
+            uid: 0,
+            subject,
+            from_name: String::new(),
+            from_address: from,
+            date: None,
+            seen: false,
+            category_id: None,
+        };
+        let start = std::time::Instant::now();
+        let (key, confidence) = classifier.ask(&classify::mail_state(&env))?;
+        let label = match classify::parse_category_key(&key) {
+            Some(None) => "收件箱".to_string(),
+            Some(Some(id)) => classifier
+                .categories()
+                .iter()
+                .find(|c| c.id == id)
+                .map_or(key.clone(), |c| c.name.clone()),
+            None => key.clone(),
+        };
+        Ok(ClassifyTestResult {
+            label,
+            confidence,
+            accepted: classify::decide(&key, confidence, threshold, classifier.categories())
+                .is_some(),
+            elapsed_ms: start.elapsed().as_millis() as u64,
+        })
     })
     .await
 }
@@ -1069,6 +1179,7 @@ pub fn run() {
             list_categories,
             create_category,
             update_category,
+            test_classify,
             delete_category,
             reorder_categories,
             move_messages,

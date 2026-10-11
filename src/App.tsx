@@ -158,7 +158,8 @@ export default function App() {
         const stats = await api.syncInbox(email);
         await loadCached(email, activeViews.current[email] ?? null);
         patch(email, { syncing: false });
-        if (announce || stats.added > 0) showNotice(syncSummary(stats));
+        if (stats.classifyError) showNotice(`智能分类失败，已按规则归类: ${stats.classifyError}`);
+        else if (announce || stats.added > 0) showNotice(syncSummary(stats));
         if (stats.added > 0) {
           if (settings?.sync.desktopNotifications ?? true) {
             const recent = await api.listCached(email, null, 1).catch(() => []);
@@ -375,7 +376,7 @@ export default function App() {
 
   async function saveReading(reading: Partial<SettingsView["reading"]>, notice: string) {
     if (!settings) return;
-    const { hasProxyPassword: _, ...plain } = settings;
+    const { hasProxyPassword: _, hasClassifyToken: __, ...plain } = settings;
     try {
       setSettings(await api.saveSettings({ ...plain, reading: { ...plain.reading, ...reading } }));
       showNotice(notice);
