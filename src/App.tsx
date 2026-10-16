@@ -757,6 +757,10 @@ export default function App() {
           setDialog({ open: false, editing: null });
           setSettingsTab("proxy");
         }}
+        onOpenOAuthSettings={() => {
+          setDialog({ open: false, editing: null });
+          setSettingsTab("advanced");
+        }}
       />
     </div>
   );

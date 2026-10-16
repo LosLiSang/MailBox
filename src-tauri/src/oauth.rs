@@ -21,6 +21,7 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// MailBox 的公共客户端注册 ID（非密钥）；自定义设置可覆盖。
 const MICROSOFT_CLIENT_ID: &str = "88600fe5-f9d3-4b15-974d-1c299963a96e";
+const OAUTH_GUIDE_URL: &str = "https://github.com/LosLiSang/MailBox/blob/main/docs/oauth-setup.md";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -66,6 +67,7 @@ impl OAuthProvider {
     }
 
     /// (client_id, client_secret)
+    /// 未配置时报错里带上教程链接：安装版用户手里没有源码
     fn client(self, apps: &OAuthApps) -> Result<(String, Option<String>), String> {
         let (id, secret) = match self {
             Self::Google => (&apps.google_client_id, Some(&apps.google_client_secret)),
@@ -81,7 +83,7 @@ impl OAuthProvider {
         };
         if id.is_empty() || secret.is_some_and(|s| s.is_empty()) {
             return Err(format!(
-                "还没有配置 {} OAuth 应用。请先到「设置 → 高级」填写 Client ID{}",
+                "还没有配置 {} OAuth 应用。请先到「设置 → 高级」填写 Client ID{}，获取方法见教程：{OAUTH_GUIDE_URL}",
                 self.name(),
                 if secret.is_some() {
                     " 和 Client Secret"
@@ -618,10 +620,9 @@ mod tests {
     #[test]
     fn requires_client_config() {
         let mut apps = OAuthApps::default();
-        assert!(OAuthProvider::Google
-            .client(&apps)
-            .unwrap_err()
-            .contains("Client Secret"));
+        let err = OAuthProvider::Google.client(&apps).unwrap_err();
+        assert!(err.contains("Client Secret"));
+        assert!(err.contains(OAUTH_GUIDE_URL));
         // 新安装和旧设置的空 ID 都使用项目注册；显式配置仍优先。
         for configured in ["", "   ", " m "] {
             apps.microsoft_client_id = configured.into();

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type Account } from "../api";
+import { isOAuthNotConfiguredError, OAUTH_GUIDE_URL } from "../oauthConfig";
 import { detectProvider, PROVIDERS, providerById, unsupportedReason, type Provider } from "../providers";
 import { Icon } from "./Icon";
 
@@ -11,6 +12,8 @@ type Props = {
   onClose: () => void;
   onSaved: (account: Account) => void;
   onOpenSettings: () => void;
+  /** 跳到「设置 → 高级」填写 OAuth 应用 */
+  onOpenOAuthSettings: () => void;
 };
 
 type Form = {
@@ -31,7 +34,7 @@ const emptyForm = (p: Provider): Form => ({
   useProxy: false,
 });
 
-export function AccountDialog({ open, editing, proxyConfigured, onClose, onSaved, onOpenSettings }: Props) {
+export function AccountDialog({ open, editing, proxyConfigured, onClose, onSaved, onOpenSettings, onOpenOAuthSettings }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const [provider, setProvider] = useState<Provider | null>(null);
   const [form, setForm] = useState<Form>(emptyForm(PROVIDERS[0]));
@@ -314,6 +317,16 @@ export function AccountDialog({ open, editing, proxyConfigured, onClose, onSaved
           )}
 
           {error && <p className="error">{error}</p>}
+          {error && isOAuthNotConfiguredError(error) && (
+            <div className="button-row">
+              <button type="button" className="ghost" onClick={onOpenOAuthSettings}>
+                去「设置 → 高级」配置
+              </button>
+              <button type="button" className="link" onClick={() => api.openExternal(OAUTH_GUIDE_URL)}>
+                查看配置教程
+              </button>
+            </div>
+          )}
 
           <div className="actions">
             <button type="button" className="ghost" onClick={close} disabled={busy === "verify"}>
