@@ -14,6 +14,16 @@ import {
   type SettingsView,
 } from "../api";
 import { clefAccountId, clefEndpoint, formatSize, move, parseSenderList } from "../format";
+import {
+  cleanCredential,
+  GOOGLE_SETUP_STEPS,
+  googleClientIdWarning,
+  googleClientSecretWarning,
+  googleOAuthConfigured,
+  microsoftClientIdWarning,
+  MICROSOFT_CUSTOM_GUIDE_URL,
+  OAUTH_GUIDE_URL,
+} from "../oauthConfig";
 import { providerById } from "../providers";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
@@ -1148,57 +1158,107 @@ function AppearanceTab({ draft, setDraft }: DraftProps) {
 
 // ---------- 高级：OAuth 应用 ----------
 
+function FormatWarning({ text }: { text: string | null }) {
+  return text ? <p className="field-warning">⚠️ {text}</p> : null;
+}
+
 function AdvancedTab({ draft, setDraft }: DraftProps) {
   const o = draft.oauth;
-  const set = (p: Partial<Settings["oauth"]>) => setDraft({ ...draft, oauth: { ...o, ...p } });
+  // 粘贴的值常带首尾空格或换行，输入时直接去掉
+  const set = (key: keyof Settings["oauth"], value: string) =>
+    setDraft({ ...draft, oauth: { ...o, [key]: cleanCredential(value) } });
   return (
     <>
       <Section
-        title="Google OAuth 应用"
-        desc="Gmail 浏览器登录需要你自己在 Google Cloud 创建一个「桌面应用」类型的 OAuth 客户端。步骤见项目里的 docs/oauth-setup.md。"
+        title="Google OAuth 应用（Gmail 浏览器登录）"
+        desc="用浏览器登录 Gmail，需要先在 Google Cloud 创建你自己的 OAuth 应用，约 10 分钟。只想先用起来，可以在添加 Gmail 账号时选「改用应用专用密码」，不用填写这里。"
       >
+        <p className="muted">
+          国内网络打开 Google Cloud、完成授权都需要代理，请先在「代理」页配置好。按下面的步骤操作，每个按钮打开对应的控制台页面；截图和常见错误见{" "}
+          <button className="link inline" onClick={() => api.openExternal(OAUTH_GUIDE_URL)}>
+            完整教程
+          </button>
+          。
+        </p>
+        <ol className="setup-steps">
+          {GOOGLE_SETUP_STEPS.map((step, i) => (
+            <li key={step.url}>
+              <span className="setup-step-index">{i + 1}</span>
+              <div className="setup-step-text">
+                <strong>{step.title}</strong>
+                <span className="muted">{step.detail}</span>
+              </div>
+              <button className="ghost small" onClick={() => api.openExternal(step.url)}>
+                {step.button}
+              </button>
+            </li>
+          ))}
+          <li>
+            <span className="setup-step-index">{GOOGLE_SETUP_STEPS.length + 1}</span>
+            <div className="setup-step-text">
+              <strong>把客户端 ID 和密钥粘贴到下方，点「保存」</strong>
+              <span className="muted">然后到「账号 → 添加账号 → Gmail」，勾选「通过代理连接」，点「使用 Gmail 账号登录」。</span>
+            </div>
+          </li>
+        </ol>
+        <div className="callout">
+          <strong>容易踩坑</strong>
+          <ul>
+            <li>
+              没把自己加为<b>测试用户</b>（第 4 步），登录时会提示「已拒绝访问：未完成 Google 验证流程」。
+            </li>
+            <li>
+              客户端密钥<b>只在创建时的弹窗里显示一次</b>；错过了就打开该客户端详情页，点「添加密钥」重新生成。
+            </li>
+            <li>
+              应用处于「测试」状态时，登录<b>7 天后过期</b>，到「账号 → 编辑 → 重新登录」即可。
+            </li>
+          </ul>
+        </div>
         <label>
-          Client ID
+          Client ID（客户端 ID）
           <input
             placeholder="xxxx.apps.googleusercontent.com"
             value={o.googleClientId}
-            onChange={(e) => set({ googleClientId: e.currentTarget.value })}
+            onChange={(e) => set("googleClientId", e.currentTarget.value)}
           />
         </label>
+        <FormatWarning text={googleClientIdWarning(o.googleClientId)} />
         <label>
-          Client Secret
+          Client Secret（客户端密钥）
           <input
             type="password"
             placeholder="GOCSPX-..."
             value={o.googleClientSecret}
-            onChange={(e) => set({ googleClientSecret: e.currentTarget.value })}
+            onChange={(e) => set("googleClientSecret", e.currentTarget.value)}
           />
         </label>
-        <button className="link" onClick={() => api.openExternal("https://console.cloud.google.com/apis/credentials")}>
-          打开 Google Cloud Console
-        </button>
+        <FormatWarning text={googleClientSecretWarning(o.googleClientSecret)} />
+        {googleOAuthConfigured(o) && <p className="success">✅ 已填写，保存后即可用浏览器登录 Gmail</p>}
       </Section>
 
       <Section
-        title="Microsoft OAuth 应用"
-        desc="Outlook / Hotmail 默认使用 MailBox 的 OAuth 应用，可直接在账号页登录，无需注册 Azure。只有需要使用自己的应用时才填写下方 ID；清空并保存可恢复默认。"
+        title="Microsoft OAuth 应用（Outlook / Hotmail）"
+        desc="大多数用户不需要填写。Outlook / Hotmail 默认使用 MailBox 内置的应用，在「添加账号 → Outlook」直接登录即可，无需注册 Azure。"
       >
-        <label>
-          自定义 Application (client) ID（可选）
-          <input
-            placeholder="留空使用 MailBox 默认应用"
-            value={o.microsoftClientId}
-            onChange={(e) => set({ microsoftClientId: e.currentTarget.value })}
-          />
-        </label>
-        <button
-          className="link"
-          onClick={() =>
-            api.openExternal("https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade")
-          }
-        >
-          打开 Azure 应用注册
-        </button>
+        <details className="advanced" open={Boolean(o.microsoftClientId)}>
+          <summary>使用自己的 Microsoft 应用（高级，仅维护者需要）</summary>
+          <p className="muted">
+            只有你自己维护 Microsoft Entra 应用注册时才填写。留空，或清空后保存，即恢复默认应用；更换应用后，已有账号可能需要重新登录。
+          </p>
+          <label>
+            Application (client) ID
+            <input
+              placeholder="留空使用 MailBox 默认应用"
+              value={o.microsoftClientId}
+              onChange={(e) => set("microsoftClientId", e.currentTarget.value)}
+            />
+          </label>
+          <FormatWarning text={microsoftClientIdWarning(o.microsoftClientId)} />
+          <button className="link" onClick={() => api.openExternal(MICROSOFT_CUSTOM_GUIDE_URL)}>
+            查看自定义应用教程
+          </button>
+        </details>
       </Section>
     </>
   );

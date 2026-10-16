@@ -2327,3 +2327,78 @@ select:disabled {
   font-family: var(--ui-font), var(--font-sans-default);
   font-size: calc(14px * var(--ui-scale));
 }
+
+/* ---------- 高级：OAuth 应用配置步骤 ---------- */
+
+.setup-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.setup-steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--separator);
+}
+
+.setup-steps li:last-child {
+  border-bottom: none;
+}
+
+.setup-step-index {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.setup-step-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.setup-step-text .muted {
+  font-size: 12px;
+}
+
+.callout {
+  padding: 10px 12px;
+  border-left: 3px solid #f5a623;
+  border-radius: var(--radius-sm);
+  background: rgba(245, 166, 35, 0.12);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.callout ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.field-warning {
+  margin: -4px 0 0;
+  color: #c77c00;
+  font-size: 12px;
+}
+
+.link.inline {
+  font-size: inherit;
+}

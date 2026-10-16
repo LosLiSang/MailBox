@@ -28,7 +28,7 @@
   - 可为每个分类填写「分类说明」，提升判断准确度。配置方法见下方「智能分类配置」。
 - **🌐 全面的协议与服务商适配**：
   - 内置支持 **Outlook / Hotmail**（无需注册 Azure，一键浏览器 OAuth 授权登录）。
-  - 支持 **Gmail**（标准 OAuth 2.0 PKCE 流程）。
+  - 支持 **Gmail**：应用专用密码直接可用；浏览器登录（OAuth 2.0 PKCE）需先创建自己的 Google OAuth 应用，见 [OAuth 配置教程](docs/oauth-setup.md)。
   - 支持 **QQ 邮箱、腾讯企业邮、iCloud、Yahoo、阿里邮箱**及任意标准 IMAP/SMTP 邮箱。
   - 内置支持全局与按账号独立的 HTTP / SOCKS5 代理配置及网络连通性测速。
 
